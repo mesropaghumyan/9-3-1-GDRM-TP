@@ -22,7 +22,7 @@ Les règles de développement (architecture, qualité, tests, gestion des erreur
 
 Le cas d'usage métier (adresse → géocodage → météo, cf. SFD §4) est implémenté selon l'architecture hexagonale décrite dans le STD : domaine pur, ports/adaptateurs, résilience (cache, retry, circuit breaker), gestion d'erreurs RFC 7807, tests unitaires/intégration/e2e.
 
-Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations sélectionnables par variable d'environnement, sans recompilation (TP2) : Nominatim ou BAN pour le géocodage, Open-Meteo ou MET Norway pour la météo — cf. `GEOCODING_PROVIDER`/`WEATHER_PROVIDER` dans [`.env.example`](./.env.example).
+Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations sélectionnables par variable d'environnement, sans recompilation (TP2) : Nominatim ou BAN pour le géocodage, Open-Meteo ou MET Norway pour la météo — cf. [« Fournisseurs configurables »](#fournisseurs-configurables-tp2) ci-dessous.
 
 ## Structure du dépôt
 
@@ -68,7 +68,29 @@ curl "http://localhost:3000/forecast?address=Al%C3%A8s"
 # {"address":"Alès","latitude":44.13,"longitude":4.08,"hourly":{"temperature":[...]}}
 ```
 
-Fournisseurs par défaut : BAN (géocodage) et Open-Meteo (météo). Pour basculer sur Nominatim/MET Norway sans changer une ligne de code : `GEOCODING_PROVIDER=nominatim WEATHER_PROVIDER=met-norway` dans `.env`.
+### Fournisseurs configurables (TP2)
+
+Chaque service externe a deux implémentations interchangeables, choisies par variable d'environnement — aucune recompilation ni changement de code (cf. [STD §3.6](./docs/STD.md)) :
+
+| Variable             | Valeurs possibles            | Défaut       | Fournisseur                                                         |
+| -------------------- | ---------------------------- | ------------ | ------------------------------------------------------------------- |
+| `GEOCODING_PROVIDER` | `nominatim` \| `ban`         | `ban`        | Nominatim (OpenStreetMap) ou API Adresse (BAN, géocodeur souverain) |
+| `WEATHER_PROVIDER`   | `open-meteo` \| `met-norway` | `open-meteo` | Open-Meteo ou MET Norway Locationforecast                           |
+
+Dans `.env` :
+
+```bash
+GEOCODING_PROVIDER=nominatim
+WEATHER_PROVIDER=met-norway
+```
+
+Ou pour un essai ponctuel, sans éditer `.env` :
+
+```bash
+GEOCODING_PROVIDER=nominatim WEATHER_PROVIDER=met-norway npm run dev
+```
+
+Les deux variables sont indépendantes : chacune peut être changée seule (ex. garder `open-meteo` pour la météo tout en passant à `ban` pour le géocodage). Le contrat de l'API (`GET /forecast`, cf. [SFD §6](./docs/SFD.md)) est strictement identique quel que soit le fournisseur actif — seule la couche infrastructure change.
 
 ### Documentation interactive (OpenAPI / Swagger UI)
 
