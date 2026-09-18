@@ -11,7 +11,7 @@ import { CircuitBreakerHttpClient } from "./http/CircuitBreakerHttpClient";
 import { HttpTimeoutError } from "./http/HttpClientError";
 
 interface OpenMeteoResponse {
-  hourly: HourlyForecast & Record<string, unknown>;
+  hourly: { temperature_2m: number[] } & Record<string, unknown>;
 }
 
 /**
@@ -34,12 +34,12 @@ export class OpenMeteoWeatherAdapter implements WeatherPort {
         {
           latitude: String(coordinates.latitude),
           longitude: String(coordinates.longitude),
-          hourly: "shortwave_radiation",
+          hourly: "temperature_2m",
         },
       );
       // Ne restitue que le champ contractuel (RG4, cf. docs/SFD.md §5) : Open-Meteo
       // renvoie aussi `hourly.time` et d'autres champs non documentés dans le contrat.
-      return { shortwave_radiation: response.hourly.shortwave_radiation };
+      return { temperature: response.hourly.temperature_2m };
     } catch (err) {
       if (err instanceof HttpTimeoutError) {
         this.logger.error({ err }, "Délai dépassé pour l'appel au service météo");

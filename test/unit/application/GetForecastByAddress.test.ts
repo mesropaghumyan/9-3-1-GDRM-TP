@@ -19,7 +19,7 @@ function randomCoordinates(): Coordinates {
 
 function randomHourlyForecast(): HourlyForecast {
   return {
-    shortwave_radiation: faker.helpers.multiple(() => faker.number.float({ min: 0, max: 1000 }), {
+    temperature: faker.helpers.multiple(() => faker.number.float({ min: -10, max: 40 }), {
       count: 3,
     }),
   };

@@ -27,13 +27,14 @@ const FORECAST_RESPONSE_SCHEMA = {
     hourly: {
       type: "object",
       properties: {
-        shortwave_radiation: {
+        temperature: {
           type: "array",
           items: { type: "number" },
-          example: [0, 0, 10, 94, 259, 431],
+          description: "Température horaire (°C), quel que soit le fournisseur météo actif.",
+          example: [12.4, 11.8, 11.1, 10.6, 12.9, 16.2],
         },
       },
-      required: ["shortwave_radiation"],
+      required: ["temperature"],
     },
   },
   required: ["address", "latitude", "longitude", "hourly"],
@@ -64,7 +65,8 @@ export const openApiDocument = {
     version: "1.0.0",
     description:
       "API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant " +
-      "géocodage (Nominatim) puis météo (Open-Meteo). Cf. docs/SFD.md pour la spécification complète.",
+      "géocodage puis météo. Le fournisseur de chaque service (Nominatim/BAN, Open-Meteo/MET Norway) " +
+      "est configurable côté serveur sans changer ce contrat. Cf. docs/SFD.md pour la spécification complète.",
   },
   servers: [{ url: "/", description: "Serveur courant" }],
   paths: {

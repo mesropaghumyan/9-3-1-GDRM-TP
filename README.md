@@ -1,6 +1,6 @@
-# TP1 — API Météo par adresse
+# TP1/TP2 — API Météo par adresse, multi-fournisseurs
 
-API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
+API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Le fournisseur de chaque service est configurable sans recompilation (TP2). Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
 
 ## Documentation
 
@@ -8,7 +8,8 @@ Toute la spécification du projet vit dans [`docs/`](./docs) :
 
 | Document                                     | Contenu                                                                                                                                                         |
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`docs/TP.md`](./docs/TP.md)                 | Énoncé officiel du TP.                                                                                                                                          |
+| [`docs/TP_1.md`](./docs/TP_1.md)             | Énoncé officiel du TP1 (API météo).                                                                                                                             |
+| [`docs/TP_2.md`](./docs/TP_2.md)             | Énoncé officiel du TP2 (changement de fournisseurs).                                                                                                            |
 | [`docs/SUPPORT_J1.md`](./docs/SUPPORT_J1.md) | Support de cours (dépendances, couplage, IoC/DI).                                                                                                               |
 | [`docs/SFD.md`](./docs/SFD.md)               | **Spécifications Fonctionnelles Détaillées** : cas d'utilisation, règles de gestion, contrat d'API, critères d'acceptation.                                     |
 | [`docs/STD.md`](./docs/STD.md)               | **Spécifications Techniques Détaillées** : architecture hexagonale, choix technologiques, design patterns, gestion des erreurs, résilience, stratégie de tests. |
@@ -19,26 +20,29 @@ Les règles de développement (architecture, qualité, tests, gestion des erreur
 
 ## État du projet
 
-Le cas d'usage métier (adresse → géocodage → météo, cf. SFD §4) est implémenté selon l'architecture hexagonale décrite dans le STD : domaine pur, ports/adaptateurs, résilience (cache, retry, circuit breaker), gestion d'erreurs RFC 7807, et tests unitaires/intégration/e2e.
+Le cas d'usage métier (adresse → géocodage → météo, cf. SFD §4) est implémenté selon l'architecture hexagonale décrite dans le STD : domaine pur, ports/adaptateurs, résilience (cache, retry, circuit breaker), gestion d'erreurs RFC 7807, tests unitaires/intégration/e2e.
+
+Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations sélectionnables par variable d'environnement, sans recompilation (TP2) : Nominatim ou BAN pour le géocodage, Open-Meteo ou MET Norway pour la météo — cf. [« Fournisseurs configurables »](#fournisseurs-configurables-tp2) ci-dessous.
 
 ## Structure du dépôt
 
 ```
 .
-├── docs/                        # SFD, STD, TP, support de cours
+├── docs/                        # SFD, STD, TP1/TP2, support de cours
 ├── src/
 │   ├── domain/                  # Cœur métier : Value Objects, ports, erreurs
 │   ├── application/             # Cas d'usage GetForecastByAddress
 │   ├── infrastructure/
 │   │   ├── inbound/http/        # Contrôleur, validation, middlewares
-│   │   └── outbound/            # Adaptateurs Nominatim/Open-Meteo, résilience HTTP
+│   │   └── outbound/            # Adaptateurs (Nominatim/BAN, Open-Meteo/MET Norway), résilience HTTP
 │   ├── config/                  # Env, jetons DI (tokens.ts) et composition root (tsyringe)
 │   ├── logger.ts
 │   ├── app.ts                   # Construction de l'application Express (testable)
 │   └── server.ts                # Point d'entrée (bootstrap + écoute HTTP)
 ├── test/
 │   ├── unit/                    # Domaine, application, décorateurs de résilience
-│   ├── integration/             # Adaptateurs sortants, HTTP mocké (MSW)
+│   ├── contract/                # Suites de tests de contrat partagées par port (GeocodingPort, WeatherPort)
+│   ├── integration/             # Chaque adaptateur passé au contrat de son port, HTTP mocké (MSW)
 │   └── e2e/                     # Supertest sur l'app complète
 ├── Dockerfile
 ├── docker-compose.yml
@@ -61,8 +65,32 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 
 curl "http://localhost:3000/forecast?address=Al%C3%A8s"
-# {"address":"Alès","latitude":44.13,"longitude":4.08,"hourly":{"shortwave_radiation":[...]}}
+# {"address":"Alès","latitude":44.13,"longitude":4.08,"hourly":{"temperature":[...]}}
 ```
+
+### Fournisseurs configurables (TP2)
+
+Chaque service externe a deux implémentations interchangeables, choisies par variable d'environnement — aucune recompilation ni changement de code (cf. [STD §3.6](./docs/STD.md)) :
+
+| Variable             | Valeurs possibles            | Défaut       | Fournisseur                                                         |
+| -------------------- | ---------------------------- | ------------ | ------------------------------------------------------------------- |
+| `GEOCODING_PROVIDER` | `nominatim` \| `ban`         | `ban`        | Nominatim (OpenStreetMap) ou API Adresse (BAN, géocodeur souverain) |
+| `WEATHER_PROVIDER`   | `open-meteo` \| `met-norway` | `open-meteo` | Open-Meteo ou MET Norway Locationforecast                           |
+
+Dans `.env` :
+
+```bash
+GEOCODING_PROVIDER=nominatim
+WEATHER_PROVIDER=met-norway
+```
+
+Ou pour un essai ponctuel, sans éditer `.env` :
+
+```bash
+GEOCODING_PROVIDER=nominatim WEATHER_PROVIDER=met-norway npm run dev
+```
+
+Les deux variables sont indépendantes : chacune peut être changée seule (ex. garder `open-meteo` pour la météo tout en passant à `ban` pour le géocodage). Le contrat de l'API (`GET /forecast`, cf. [SFD §6](./docs/SFD.md)) est strictement identique quel que soit le fournisseur actif — seule la couche infrastructure change.
 
 ### Documentation interactive (OpenAPI / Swagger UI)
 

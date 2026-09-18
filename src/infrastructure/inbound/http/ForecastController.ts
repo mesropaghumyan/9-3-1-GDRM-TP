@@ -7,7 +7,7 @@ interface ForecastResponseBody {
   address: string;
   latitude: number;
   longitude: number;
-  hourly: { shortwave_radiation: number[] };
+  hourly: { temperature: number[] };
 }
 
 function toForecastResponse(result: ForecastResult): ForecastResponseBody {

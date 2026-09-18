@@ -1,7 +1,10 @@
 import { container as rootContainer } from "tsyringe";
 import { GetForecastByAddress } from "../application/GetForecastByAddress";
+import { BanGeocodingAdapter } from "../infrastructure/outbound/BanGeocodingAdapter";
 import { CachedGeocodingAdapter } from "../infrastructure/outbound/CachedGeocodingAdapter";
 import { CircuitBreakerHttpClient } from "../infrastructure/outbound/http/CircuitBreakerHttpClient";
+import { MetNorwayWeatherAdapter } from "../infrastructure/outbound/MetNorwayWeatherAdapter";
+import { NominatimGeocodingAdapter } from "../infrastructure/outbound/NominatimGeocodingAdapter";
 import { OpenMeteoWeatherAdapter } from "../infrastructure/outbound/OpenMeteoWeatherAdapter";
 import type { Logger } from "../logger";
 import type { Env } from "./env";
@@ -32,7 +35,9 @@ export function buildContainer(env: Env, logger: Logger): Container {
 
   container.registerInstance(TOKENS.Logger, logger);
   container.registerInstance(TOKENS.NominatimBaseUrl, env.NOMINATIM_BASE_URL);
+  container.registerInstance(TOKENS.BanBaseUrl, env.BAN_BASE_URL);
   container.registerInstance(TOKENS.OpenMeteoBaseUrl, env.OPEN_METEO_BASE_URL);
+  container.registerInstance(TOKENS.MetNorwayBaseUrl, env.MET_NORWAY_BASE_URL);
   container.registerInstance(TOKENS.FetchHttpClientOptions, { timeoutMs: env.HTTP_TIMEOUT_MS });
   container.registerInstance(TOKENS.RetryOptions, {
     maxAttempts: RETRY_MAX_ATTEMPTS,
@@ -46,13 +51,26 @@ export function buildContainer(env: Env, logger: Logger): Container {
     ttlMs: env.GEOCODING_CACHE_TTL_MS,
   });
 
-  // Singleton scopé à ce container : NominatimGeocodingAdapter et
-  // OpenMeteoWeatherAdapter doivent partager la même chaîne retry + circuit
-  // breaker, comme dans le câblage manuel d'origine (cf. §3.6, §3.7).
+  // Singleton scopé à ce container : les deux adaptateurs sortants (quel que
+  // soit le fournisseur choisi ci-dessous) partagent la même chaîne retry +
+  // circuit breaker, comme dans le câblage manuel d'origine (cf. §3.6, §3.7).
   container.registerSingleton(CircuitBreakerHttpClient);
 
+  // Choix du fournisseur sans recompilation (TP2) : seule cette liaison
+  // change selon la configuration, le reste du graphe (cache, résilience,
+  // domaine, application) est identique quel que soit le fournisseur.
+  if (env.GEOCODING_PROVIDER === "ban") {
+    container.register(TOKENS.RawGeocodingPort, { useClass: BanGeocodingAdapter });
+  } else {
+    container.register(TOKENS.RawGeocodingPort, { useClass: NominatimGeocodingAdapter });
+  }
   container.register(TOKENS.GeocodingPort, { useClass: CachedGeocodingAdapter });
-  container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+
+  if (env.WEATHER_PROVIDER === "met-norway") {
+    container.register(TOKENS.WeatherPort, { useClass: MetNorwayWeatherAdapter });
+  } else {
+    container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+  }
 
   const getForecastByAddress = container.resolve(GetForecastByAddress);
 
