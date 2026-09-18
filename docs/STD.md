@@ -1,10 +1,10 @@
 # Spécifications Techniques Détaillées (STD)
-## TP1 — API Météo par adresse
+## TP1/TP2 — API Météo par adresse, multi-fournisseurs
 
 | | |
 |---|---|
-| **Projet** | TP1 - Gestion des dépendances, risques et maintenabilité |
-| **Version** | 1.0 |
+| **Projet** | TP1/TP2 - Gestion des dépendances, risques et maintenabilité |
+| **Version** | 2.0 — étend le TP1 avec tsyringe (IoC/DI), OpenAPI et la sélection de fournisseur configurable (TP2) |
 | **Date** | 2026-09-18 |
 | **Auteur** | Mesrop Aghumyan |
 | **Document lié** | [SFD.md](./SFD.md) |
@@ -18,7 +18,7 @@ Ce document traduit le SFD en architecture concrète, en respectant strictement 
 
 - les principes du cours ([SUPPORT_J1.md](./SUPPORT_J1.md)) : couplage faible, cohésion forte, IoC, DI par constructeur, isolation des SPOF ;
 - les règles du projet ([CLAUDE.md](../CLAUDE.md)) : architecture hexagonale, SOLID/KISS/DRY, exceptions métier vs techniques, RFC 7807, logs structurés avec MDC, tests AAA, centralisation des versions, limitation des dépendances tierces ;
-- le périmètre exact du TP officiel ([TP.md](./TP.md)) : une API HTTP recevant une adresse et renvoyant une prévision météo. Aucune interface utilisateur n'est traitée dans ce document.
+- le périmètre exact du TP officiel ([TP_1.md](./TP_1.md)) : une API HTTP recevant une adresse et renvoyant une prévision météo, étendu par [TP_2.md](./TP_2.md) qui exige un second fournisseur par port (géocodage, météo) sélectionnable sans recompilation. Aucune interface utilisateur n'est traitée dans ce document.
 
 **Note d'arbitrage robustesse / simplicité :** le cours insiste autant sur le KISS que sur la maîtrise des dépendances externes. Les mécanismes de résilience ajoutés en §3.7 sont volontairement **faits maison et minimaux** (pas de nouvelle dépendance lourde type message broker ou service mesh) : ils répondent à un risque identifié et documenté, pas à une anticipation spéculative.
 
@@ -34,20 +34,20 @@ flowchart LR
         UC[Domaine / Application<br/>GetForecastByAddress]
         PORT_GEO[Port sortant<br/>GeocodingPort]
         PORT_WEATHER[Port sortant<br/>WeatherPort]
-        ADP_GEO["Adaptateur sortant<br/>Cache + Retry + Circuit Breaker<br/>+ NominatimAdapter"]
-        ADP_WEATHER["Adaptateur sortant<br/>Retry + Circuit Breaker<br/>+ OpenMeteoAdapter"]
+        ADP_GEO["Adaptateur sortant<br/>Cache + Retry + Circuit Breaker<br/>+ Nominatim ou BAN"]
+        ADP_WEATHER["Adaptateur sortant<br/>Retry + Circuit Breaker<br/>+ Open-Meteo ou MET Norway"]
 
         RL --> API
         API --> UC
         UC --> PORT_GEO
         UC --> PORT_WEATHER
-        PORT_GEO -.implémenté par.-> ADP_GEO
-        PORT_WEATHER -.implémenté par.-> ADP_WEATHER
+        PORT_GEO -.implémenté par<br/>(config: GEOCODING_PROVIDER).-> ADP_GEO
+        PORT_WEATHER -.implémenté par<br/>(config: WEATHER_PROVIDER).-> ADP_WEATHER
     end
 
     subgraph External["Services externes (SPOF)"]
-        NOM[Nominatim<br/>Géocodage]
-        MET[Open-Meteo<br/>Prévisions]
+        NOM[Nominatim / BAN<br/>Géocodage]
+        MET[Open-Meteo / MET Norway<br/>Prévisions]
     end
 
     CLIENT -- "GET /forecast?address=..." --> RL
@@ -55,7 +55,7 @@ flowchart LR
     ADP_WEATHER -- HTTP --> MET
 ```
 
-**Principe directeur (règle de dépendance hexagonale) :** le domaine ne dépend de rien ; l'infrastructure dépend du domaine (via les ports), jamais l'inverse. Les deux SPOF externes identifiés (Nominatim, Open-Meteo — cf. cours, Partie 2) sont isolés derrière des ports, **et** protégés par une couche de résilience détaillée en §3.7 — les trois stratégies SPOF du cours (isoler / dédoubler / circuit breaker+cache) sont ainsi couvertes pour deux des trois axes ; le « dédoublement » de fournisseur reste un risque résiduel assumé (§13).
+**Principe directeur (règle de dépendance hexagonale) :** le domaine ne dépend de rien ; l'infrastructure dépend du domaine (via les ports), jamais l'inverse. Les deux SPOF externes identifiés (géocodage, météo — cf. cours, Partie 2) sont isolés derrière des ports, **et** protégés par une couche de résilience détaillée en §3.7 — les trois stratégies SPOF du cours (isoler / dédoubler / circuit breaker+cache) sont ainsi couvertes : chaque port a désormais deux fournisseurs concrets sélectionnables par configuration (TP2, §3.6), ce qui réalise le « dédoublement » que le §13 documentait comme risque résiduel au TP1 — le risque restant est l'absence de **bascule automatique** en cas de panne du fournisseur actif (§13).
 
 ## 3. Backend — Architecture hexagonale détaillée
 
@@ -98,14 +98,16 @@ Le projet vit directement à la racine du dépôt (pas de sous-dossier applicati
 │   │       │   ├── FetchHttpClient.ts          # implémentation de base (timeout)
 │   │       │   ├── RetryHttpClient.ts          # décorateur retry/backoff
 │   │       │   └── CircuitBreakerHttpClient.ts # décorateur circuit breaker
-│   │       ├── NominatimGeocodingAdapter.ts
-│   │       ├── CachedGeocodingAdapter.ts       # décorateur cache
-│   │       └── OpenMeteoWeatherAdapter.ts
+│   │       ├── NominatimGeocodingAdapter.ts    # géocodage (fournisseur par défaut, TP1)
+│   │       ├── BanGeocodingAdapter.ts          # géocodage souverain (TP2)
+│   │       ├── CachedGeocodingAdapter.ts       # décorateur cache (autour du fournisseur actif)
+│   │       ├── OpenMeteoWeatherAdapter.ts      # météo (fournisseur par défaut, TP1)
+│   │       └── MetNorwayWeatherAdapter.ts      # météo alternative (TP2)
 │   │
 │   ├── config/
-│   │   ├── env.ts                  # lecture + validation des variables d'env
+│   │   ├── env.ts                  # lecture + validation des variables d'env (dont *_PROVIDER)
 │   │   ├── tokens.ts                # jetons d'injection tsyringe (Symbol)
-│   │   └── container.ts            # composition root (registrations tsyringe)
+│   │   └── container.ts            # composition root (registrations tsyringe, choix du fournisseur)
 │   │
 │   ├── logger.ts                   # instance Pino partagée
 │   └── server.ts                   # point d'entrée (bootstrap Express)
@@ -115,7 +117,8 @@ Le projet vit directement à la racine du dépôt (pas de sous-dossier applicati
 │   │   ├── domain/
 │   │   ├── application/
 │   │   └── infrastructure/         # RetryHttpClient, CircuitBreakerHttpClient, CachedGeocodingAdapter
-│   ├── integration/                # adaptateurs, avec HTTP mocké (MSW/nock)
+│   ├── contract/                   # suites de tests de contrat par port (TP2, §9.5)
+│   ├── integration/                # chaque adaptateur passé au contrat de son port (HTTP mocké MSW)
 │   └── e2e/                        # via supertest, serveur complet + smoke test
 │
 ├── package.json                    # inclut "engines": { "node": ">=22" }
@@ -308,6 +311,17 @@ Points d'attention sur cet adaptateur :
 
 `OpenMeteoWeatherAdapter` suit le même schéma d'encapsulation d'erreurs (sans contrainte `User-Agent` spécifique, Open-Meteo n'imposant pas cette politique).
 
+#### Fournisseurs alternatifs (TP2)
+
+Chaque port a un second adaptateur, exigé par [TP_2.md](./TP_2.md), suivant exactement le même schéma d'encapsulation d'erreurs que ci-dessus (mêmes exceptions métier, même traitement des timeouts) — seule la traduction du format propriétaire change :
+
+| Adaptateur | Port | Point d'attention spécifique |
+|---|---|---|
+| `BanGeocodingAdapter` | `GeocodingPort` | La BAN renvoie les coordonnées au format GeoJSON `geometry.coordinates = [longitude, latitude]` — **ordre inversé** par rapport aux champs `lat`/`lon` séparés de Nominatim. Une confusion ici passerait un test avec une adresse proche de l'équateur/méridien mais produirait des coordonnées absurdes ailleurs ; c'est exactement le genre d'erreur que le test de contrat commun (§9.5) est censé détecter, puisqu'il exécute la même assertion `latitude`/`longitude` contre les deux fournisseurs. |
+| `MetNorwayWeatherAdapter` | `WeatherPort` | `User-Agent` identifiable **obligatoire** (403 sinon, cf. TP_2.md) — même mécanisme que Nominatim mais sanctionné strictement. Le format de réponse (`properties.timeseries[].data.instant.details.air_temperature`) n'a rien de commun avec Open-Meteo ; c'est ce fournisseur qui a motivé le choix de `temperature` comme grandeur de domaine plutôt que `shortwave_radiation` (§3.2, RG4 du SFD) : MET Norway n'expose aucun champ de rayonnement solaire. |
+
+Les deux nouveaux adaptateurs sont enregistrés dans la composition root exactement comme les adaptateurs du TP1 (`@injectable()`, mêmes jetons `TOKENS.Logger`/`CircuitBreakerHttpClient`, un jeton d'URL de base dédié) — cf. §3.6.
+
 ### 3.5 Adaptateur entrant HTTP
 
 ```typescript
@@ -356,6 +370,7 @@ Conformément au cours (Partie 3 : *le conteneur IoC fait le travail*) :
 - Un paramètre typé par une **classe concrète** (ex. `CircuitBreakerHttpClient`) peut être injecté en pointant directement cette classe comme jeton (`@inject(CircuitBreakerHttpClient)`) — tsyringe la résout par réflexion, sans enregistrement explicite.
 - Un paramètre typé par une **interface du domaine** (`GeocodingPort`, `WeatherPort`), une **primitive** (URL de base, options de configuration) ou lorsque **plusieurs classes implémentent le même rôle** (ex. la chaîne `FetchHttpClient → RetryHttpClient → CircuitBreakerHttpClient` décore toutes `HttpClient`) ne peut pas être résolu par réflexion (les interfaces sont effacées à la compilation TypeScript) : il faut un jeton explicite, déclaré dans `config/tokens.ts` (`Symbol`) et enregistré dans le container.
 - `reflect-metadata` est un polyfill requis par `emitDecoratorMetadata` (activé dans `tsconfig.json`) : il doit être importé une seule fois, avant toute classe décorée — au tout début de `server.ts` pour l'exécution normale, et via `setupFiles` de Jest pour les tests.
+- **Sélection de fournisseur (TP2) :** deux classes différentes peuvent implémenter le même port (`NominatimGeocodingAdapter`/`BanGeocodingAdapter` pour `GeocodingPort`) ; il faut alors un jeton intermédiaire — `TOKENS.RawGeocodingPort` — représentant « le géocodeur brut choisi par la configuration », que `CachedGeocodingAdapter` décore. `TOKENS.GeocodingPort` pointe toujours vers `CachedGeocodingAdapter` ; seule la liaison de `TOKENS.RawGeocodingPort` change selon `env.GEOCODING_PROVIDER`. Côté météo, il n'y a pas de décorateur intermédiaire : `TOKENS.WeatherPort` est lié directement à `OpenMeteoWeatherAdapter` ou `MetNorwayWeatherAdapter` selon `env.WEATHER_PROVIDER`.
 
 ```typescript
 // config/tokens.ts
@@ -363,8 +378,11 @@ export const TOKENS = {
   Logger: Symbol("Logger"),
   GeocodingPort: Symbol("GeocodingPort"),
   WeatherPort: Symbol("WeatherPort"),
+  RawGeocodingPort: Symbol("RawGeocodingPort"), // géocodeur brut choisi par la config (TP2)
   NominatimBaseUrl: Symbol("NominatimBaseUrl"),
+  BanBaseUrl: Symbol("BanBaseUrl"),
   OpenMeteoBaseUrl: Symbol("OpenMeteoBaseUrl"),
+  MetNorwayBaseUrl: Symbol("MetNorwayBaseUrl"),
   // ... options de FetchHttpClient / RetryHttpClient / CircuitBreakerHttpClient / CachedGeocodingAdapter
 } as const;
 ```
@@ -376,18 +394,34 @@ export function buildContainer(env: Env, logger: Logger): Container {
 
   container.registerInstance(TOKENS.Logger, logger);
   container.registerInstance(TOKENS.NominatimBaseUrl, env.NOMINATIM_BASE_URL);
+  container.registerInstance(TOKENS.BanBaseUrl, env.BAN_BASE_URL);
   container.registerInstance(TOKENS.OpenMeteoBaseUrl, env.OPEN_METEO_BASE_URL);
+  container.registerInstance(TOKENS.MetNorwayBaseUrl, env.MET_NORWAY_BASE_URL);
   container.registerInstance(TOKENS.FetchHttpClientOptions, { timeoutMs: env.HTTP_TIMEOUT_MS });
   container.registerInstance(TOKENS.RetryOptions, { maxAttempts: 3, baseDelayMs: 200 });
   container.registerInstance(TOKENS.CircuitBreakerOptions, { failureThreshold: 5, resetTimeoutMs: 30_000 });
   container.registerInstance(TOKENS.CachedGeocodingAdapterOptions, { ttlMs: env.GEOCODING_CACHE_TTL_MS });
 
-  // Singleton scopé à ce container : les deux adaptateurs partagent la même
-  // chaîne retry + circuit breaker (cf. §3.7).
+  // Singleton scopé à ce container : les deux adaptateurs sortants (quel que
+  // soit le fournisseur choisi ci-dessous) partagent la même chaîne retry +
+  // circuit breaker (cf. §3.7).
   container.registerSingleton(CircuitBreakerHttpClient);
 
+  // Choix du fournisseur sans recompilation (TP2) : seule cette liaison change
+  // selon la configuration, le reste du graphe (cache, résilience, domaine,
+  // application) est identique quel que soit le fournisseur.
+  if (env.GEOCODING_PROVIDER === "ban") {
+    container.register(TOKENS.RawGeocodingPort, { useClass: BanGeocodingAdapter });
+  } else {
+    container.register(TOKENS.RawGeocodingPort, { useClass: NominatimGeocodingAdapter });
+  }
   container.register(TOKENS.GeocodingPort, { useClass: CachedGeocodingAdapter });
-  container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+
+  if (env.WEATHER_PROVIDER === "met-norway") {
+    container.register(TOKENS.WeatherPort, { useClass: MetNorwayWeatherAdapter });
+  } else {
+    container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+  }
 
   const getForecastByAddress = container.resolve(GetForecastByAddress);
 
@@ -395,9 +429,11 @@ export function buildContainer(env: Env, logger: Logger): Container {
 }
 ```
 
+*Pourquoi un `if`/`else` plutôt qu'une expression ternaire assignée à une variable :* tsyringe expose plusieurs signatures surchargées pour `register(...)` ; une variable dont le type est une **union** de deux constructeurs (`typeof BanGeocodingAdapter | typeof NominatimGeocodingAdapter`) fait échouer la résolution de surcharge de TypeScript, alors qu'un littéral de classe dans chaque branche du `if` reste sans ambiguïté.
+
 **`createChildContainer()` plutôt que le container global :** `buildContainer` est appelé une fois par instance d'application (`createApp()`), y compris plusieurs fois dans les tests (§9.7). Un *child container* isole les registrations et les singletons d'un appel à l'autre — sans lui, le cache de géocodage et l'état du circuit breaker d'un test fuiteraient vers le test suivant, puisque le container global de tsyringe est un module partagé au sein d'un même fichier de test.
 
-Toute injection se fait **par constructeur** (forme recommandée par le cours), jamais via singleton global implicite ni instanciation `new` au fil de l'eau : `container.ts` ne contient plus aucun `new` d'objet métier — seulement des `register*` déclaratifs et un unique `container.resolve(GetForecastByAddress)` qui déclenche la construction récursive de tout le graphe.
+Toute injection se fait **par constructeur** (forme recommandée par le cours), jamais via singleton global implicite ni instanciation `new` au fil de l'eau : `container.ts` ne contient plus aucun `new` d'objet métier — seulement des `register*` déclaratifs (dont deux `if`/`else` pour le choix de fournisseur) et un unique `container.resolve(GetForecastByAddress)` qui déclenche la construction récursive de tout le graphe.
 
 ### 3.7 Résilience des adaptateurs sortants
 
@@ -536,7 +572,9 @@ export class CircuitBreakerHttpClient implements HttpClient {
 | Framework HTTP | **Express** | Minimaliste, mature, suffisant pour un seul endpoint. |
 | Client HTTP sortant | **`fetch` natif (Node ≥ 18) / `undici`** | Standard, évite `axios` sans valeur ajoutée. |
 | Retry / Circuit breaker | **Implémentation maison (Decorators `HttpClient`)** | Logique simple (§3.7), pas de dépendance supplémentaire justifiée pour ce périmètre. |
-| Rate limiting entrant | **`express-rate-limit`** | Pas d'équivalent simple et fiable dans la stdlib Express ; librairie légère, largement adoptée, protège contre l'abus de l'API et l'amplification vers Nominatim (§3.7, §10). |
+| Rate limiting entrant | **`express-rate-limit`** | Pas d'équivalent simple et fiable dans la stdlib Express ; librairie légère, largement adoptée, protège contre l'abus de l'API et l'amplification vers le géocodeur actif (§3.7, §10). |
+| Géocodage | **Nominatim ou BAN** (configurable, TP2) | Deux implémentations de `GeocodingPort` ; BAN pour un géocodeur souverain, Nominatim conservé pour compatibilité (§3.6). |
+| Météo | **Open-Meteo ou MET Norway** (configurable, TP2) | Deux implémentations de `WeatherPort` ; a motivé le choix de `temperature` comme grandeur de domaine (§3.2, §3.4), seule commune aux deux fournisseurs. |
 | Validation d'entrée | **Zod** | Fail-fast dès la couche externe, schémas déclaratifs et testables. |
 | Logs | **Pino** | Logs structurés JSON performants, contexte MDC-like. |
 | DI / IoC | **tsyringe + `reflect-metadata`** | Conteneur IoC léger à décorateurs (`@injectable`/`@inject`) ; `container.ts` ne fait plus de `new` d'objet métier (cf. §3.6). |
@@ -549,12 +587,12 @@ export class CircuitBreakerHttpClient implements HttpClient {
 
 | Pattern | Où | Pourquoi |
 |---|---|---|
-| **Adapter** | `NominatimGeocodingAdapter`, `OpenMeteoWeatherAdapter` | Traduit une API externe hétérogène vers un port métier stable. |
+| **Adapter** | `NominatimGeocodingAdapter`/`BanGeocodingAdapter`, `OpenMeteoWeatherAdapter`/`MetNorwayWeatherAdapter` | Traduit une API externe hétérogène vers un port métier stable — deux adaptateurs interchangeables par port depuis le TP2. |
 | **Decorator** | `CachedGeocodingAdapter` (autour d'un `GeocodingPort`), `RetryHttpClient` et `CircuitBreakerHttpClient` (autour d'un `HttpClient`) | Ajoute cache/retry/circuit breaker **sans modifier** les adaptateurs existants ni le domaine — chaque décorateur est testable isolément (§9). Illustre le pattern Decorator explicitement cité par le CLAUDE.md, en complément du pattern Adapter ci-dessus. |
 | **Value Object** | `Address`, `Coordinates` | Immutabilité, validation centralisée, égalité par valeur. |
 | **Factory (fonction fabrique)** | `createForecastRouter` | Centralise la construction du routeur Express. |
 | **IoC Container (tsyringe)** | `buildContainer` (`config/container.ts`, `config/tokens.ts`) | Résout par réflexion tout le graphe de dépendances (ports, adaptateurs, chaîne de décorateurs) à partir des `@injectable`/`@inject` — remplace la construction manuelle par des enregistrements déclaratifs (cf. §3.6). |
-| **Strategy (extension future)** | `WeatherPort` / `GeocodingPort` | Permettrait d'ajouter un fournisseur alternatif en cas de dédoublement futur (§13), sans sur-ingénierie tant que le besoin n'existe pas. |
+| **Strategy** | `WeatherPort` / `GeocodingPort`, résolu par `TOKENS.GeocodingPort`/`RawGeocodingPort`/`WeatherPort` | **Réalisé au TP2** (anticipé mais non implémenté au TP1) : le fournisseur concret est choisi par configuration (`GEOCODING_PROVIDER`/`WEATHER_PROVIDER`) plutôt qu'en dur — la composition root fait office de sélecteur de stratégie (§3.6). |
 | **Chain of Responsibility (implicite)** | Middlewares Express (`correlationId` → `rateLimiter` → `validateForecastQuery` → contrôleur → `errorHandler`) | Traitement global et uniforme des requêtes/erreurs. |
 
 Chaque pattern répond à un besoin identifié (fonctionnel ou issu de la revue de risques) — aucun n'est introduit « par principe », conformément à la mise en garde du CLAUDE.md contre la sur-ingénierie.
@@ -634,7 +672,7 @@ Ce middleware unique garantit un format d'erreur **uniforme** sur toute l'API, a
         ┌───────────────┐
         │   E2E (peu)   │  Supertest sur l'app complète, HTTP externe mocké (MSW)
         ├───────────────┤
-        │ Intégration   │  Adaptateurs seuls, HTTP externe mocké (MSW/nock)
+        │ Intégration   │  Adaptateurs passés au contrat de leur port (§9.5), HTTP mocké (MSW)
         ├───────────────┤
         │ Unitaires     │  Domaine + cas d'usage + décorateurs, aucun I/O
         └───────────────┘
@@ -680,9 +718,20 @@ Chaque décorateur (§3.7) est testé isolément avec un `HttpClient`/`Geocoding
 - `CircuitBreakerHttpClient` : `getJson_seuilAtteintOuvreLeCircuit`, `getJson_circuitOuvertRejetteSansAppelerLeDelegate`, `getJson_apresResetTimeoutRepasseEnHalfOpen`.
 - `CachedGeocodingAdapter` : `locate_deuxiemeAppelMemeAdresseNAppellePasLeDelegate`, `locate_apresExpirationTtlRappelleLeDelegate`.
 
-### 9.5 Tests d'intégration (adaptateurs)
+### 9.5 Tests de contrat multi-fournisseurs (TP2)
 
-MSW intercepte les requêtes HTTP vers `nominatim.openstreetmap.org` et `api.open-meteo.com` avec des réponses fixtures, pour valider le mapping JSON → objets du domaine (y compris coordonnées invalides → `InvalidCoordinatesError` → `UpstreamServiceError`) et la traduction des erreurs HTTP (404, 500, timeout) → exceptions métier.
+Exigés par [TP_2.md](./TP_2.md) point 3 : une suite de tests unique par port (`test/contract/geocodingPort.contract.ts`, `weatherPort.contract.ts`), paramétrée par une **fixture** par fournisseur (bouchons MSW propres à son format, cf. §9.5.1) mais des **assertions identiques** côté domaine. Chaque fournisseur est instancié dans `test/integration/` (`geocoding.contract.test.ts`, `weather.contract.test.ts`) et exécute exactement la même suite :
+
+- `locate` / `getHourlyForecast` : cas nominal, résultat conforme au domaine.
+- `locate_adresseIntrouvableLeveAddressNotFoundError` (géocodage uniquement).
+- `locate_adresseAvecCaracteresAccentuesEstAcceptee` : encodage correct des caractères accentués dans la requête (géocodage uniquement).
+- `*_reponseMalformeeLeveUpstreamServiceError` : réponse HTTP non-2xx ou corps inattendu → erreur technique générique, jamais de fuite (RG5).
+- `*_delaiDepasseLeveUpstreamTimeoutError` : timeout → `UpstreamTimeoutError` (504).
+- **Anti-fuite de DTO** (TP2, point 4) : `expect(Object.keys(coordinates)).toEqual(["latitude", "longitude"])` et l'équivalent pour `HourlyForecast` — vérifie qu'aucun champ propre au fournisseur (`label`, `score`, `time`, ...) ne traverse l'adaptateur.
+
+#### 9.5.1 Piège détecté par le contrat commun
+
+`BanGeocodingAdapter` a été écrit avec l'ordre GeoJSON `[longitude, latitude]` de la BAN, à l'inverse des champs `lat`/`lon` séparés de Nominatim (§3.4). Le test `locate` du contrat, exécuté à l'identique contre les deux fournisseurs avec des coordonnées aléatoires (`faker`), aurait détecté une inversion : c'est exactement la classe d'erreur qu'une suite dupliquée par fournisseur (plutôt que partagée) risquerait de manquer, chaque suite étant écrite avec la connaissance implicite du format qu'elle teste.
 
 ### 9.6 Test de démarrage (smoke test)
 
@@ -690,12 +739,12 @@ Un test E2E dédié démarre l'application avec un fichier `.env` de test comple
 
 ### 9.7 Tests E2E fonctionnels
 
-Supertest démarre l'application Express complète (composition root réelle) avec les adaptateurs sortants pointés vers des mocks MSW, et valide le scénario nominal de bout en bout ainsi que les cas d'erreur du SFD §8 (critères d'acceptation), y compris le comportement du rate limiter (§10) sur un dépassement de quota.
+Supertest démarre l'application Express complète (composition root réelle) avec les adaptateurs sortants pointés vers des mocks MSW, et valide le scénario nominal de bout en bout ainsi que les cas d'erreur du SFD §8 (critères d'acceptation), y compris le comportement du rate limiter (§10) sur un dépassement de quota. Un test dédié (`get_fournisseursAlternatifsConfiguresParEnvRenvoient200SansChangementDeCode`) permute `GEOCODING_PROVIDER`/`WEATHER_PROVIDER` par variable d'environnement le temps d'une requête et vérifie une réponse `200` conforme — démonstration bout en bout du « coût du changement » quasi nul visé par le TP2 (RG7).
 
 ## 10. Sécurité
 
 - **Validation stricte des entrées** dès le contrôleur (Zod), avant toute logique métier (fail-fast).
-- **Rate limiting entrant** (`express-rate-limit`, §3.5, §3.7) : limite le nombre de requêtes par IP sur `/forecast`. Sans cela, un client (volontaire ou bogué) qui spamme l'API amplifie le trafic vers Nominatim et peut faire bannir l'IP du serveur — panne pour tous les autres utilisateurs. Réponse `429 Too Many Requests`, au format RFC 7807.
+- **Rate limiting entrant** (`express-rate-limit`, §3.5, §3.7) : limite le nombre de requêtes par IP sur `/forecast`. Sans cela, un client (volontaire ou bogué) qui spamme l'API amplifie le trafic vers le géocodeur actif et peut faire bannir l'IP du serveur — panne pour tous les autres utilisateurs. Réponse `429 Too Many Requests`, au format RFC 7807.
 - **En-têtes de sécurité HTTP** via `helmet`.
 - **Pas de secret dans les logs** ni dans les réponses d'erreur (RG5, §7).
 - **Timeouts** sur tous les appels sortants (`FetchHttpClient`), combinés au retry et au circuit breaker (§3.7) pour éviter l'épuisement de ressources en cas de service externe lent ou en panne.
@@ -712,17 +761,17 @@ Supertest démarre l'application Express complète (composition root réelle) av
 
 ## 12. Diagramme de séquence — scénario nominal
 
-*Simplifié pour la lisibilité : la chaîne retry/circuit breaker/cache (§3.7) est omise ici, elle s'intercale de façon transparente entre les adaptateurs et les services externes.*
+*Simplifié pour la lisibilité : la chaîne retry/circuit breaker/cache (§3.7) est omise ici, elle s'intercale de façon transparente entre les adaptateurs et les services externes. Fournisseurs par défaut (Nominatim/Open-Meteo) illustrés ; le diagramme est identique avec BAN/MET Norway, seuls les participants `NOM`/`OM` changent (§3.6).*
 
 ```mermaid
 sequenceDiagram
     participant C as Client API
     participant API as ForecastController
     participant UC as GetForecastByAddress
-    participant GEO as GeocodingPort (Cache+Resilience+Nominatim)
-    participant MET as WeatherPort (Resilience+OpenMeteo)
-    participant NOM as Nominatim
-    participant OM as Open-Meteo
+    participant GEO as GeocodingPort (Cache+Resilience+Nominatim/BAN)
+    participant MET as WeatherPort (Resilience+Open-Meteo/MET Norway)
+    participant NOM as Nominatim (ou BAN)
+    participant OM as Open-Meteo (ou MET Norway)
 
     C->>API: GET /forecast?address=Alès
     API->>UC: execute("Alès")
@@ -731,11 +780,11 @@ sequenceDiagram
     NOM-->>GEO: [{lat, lon}]
     GEO-->>UC: Coordinates(44.13, 4.08)
     UC->>MET: getHourlyForecast(Coordinates)
-    MET->>OM: GET /v1/forecast?latitude=...&longitude=...
+    MET->>OM: GET /forecast?latitude=...&longitude=...
     OM-->>MET: { hourly: {...} }
-    MET-->>UC: HourlyForecast
+    MET-->>UC: HourlyForecast { temperature }
     UC-->>API: ForecastResult
-    API-->>C: 200 OK { address, latitude, longitude, hourly }
+    API-->>C: 200 OK { address, latitude, longitude, hourly: { temperature } }
 ```
 
 ## 13. Risques résiduels acceptés
@@ -744,11 +793,11 @@ Cette section documente, dans l'esprit du cours (« le problème n'est pas la d�
 
 | Risque résiduel | Raison de l'acceptation | Piste si le périmètre grandit |
 |---|---|---|
-| **Pas de dédoublement de fournisseur** (un seul géocodeur, un seul fournisseur météo) | Hors périmètre du TP ; les ports (`GeocodingPort`/`WeatherPort`) permettent d'ajouter un fournisseur de repli sans changer le domaine. | Implémenter une seconde adaptation + un `Strategy`/fallback dans la composition root. |
+| **Pas de bascule automatique de fournisseur** | Le dédoublement (deux implémentations par port) est réalisé depuis le TP2, mais le choix reste **statique** (variable d'environnement au démarrage) : une panne du fournisseur actif ne bascule pas seule vers l'alternatif, elle est absorbée par le retry/circuit breaker (§3.7) puis remontée en `502`/`504`. | Fallback dynamique dans la composition root (ex. `FallbackGeocodingAdapter` essayant BAN puis Nominatim), ou health-check + bascule pilotée par un orchestrateur externe. |
 | **Cache en mémoire, non partagé entre instances, perdu au redémarrage** | Une seule instance backend pour ce TP ; donnée non critique. | Externaliser vers Redis si l'application est répliquée. |
 | **Rate limiting par instance (pas distribué)** | Cohérent avec une instance unique. | Rate limiting centralisé (ex. reverse proxy, API Gateway) en cas de scaling horizontal. |
 | **Bus factor = 1** (un seul développeur) | Contexte académique du TP. | Documentation à jour (ce document) + tests comme filet de sécurité pour toute reprise du projet. |
-| **Pas de client fourni** | Hors périmètre du TP officiel ([TP.md](./TP.md)) : seule une API est demandée. | Un client (CLI, script, interface web) pourra consommer l'API telle quelle sans modification du backend, le contrat HTTP étant stable (SFD §6). |
+| **Pas de client fourni** | Hors périmètre du TP officiel ([TP_1.md](./TP_1.md)) : seule une API est demandée. | Un client (CLI, script, interface web) pourra consommer l'API telle quelle sans modification du backend, le contrat HTTP étant stable (SFD §6). |
 
 ## 14. Traçabilité avec le SFD
 
@@ -757,7 +806,9 @@ Cette section documente, dans l'esprit du cours (« le problème n'est pas la d�
 | RG1 (adresse obligatoire) | `Address.create` + middleware `validateForecastQuery` (§3.2, §3.5) |
 | RG2 (adresse introuvable) | `AddressNotFoundError` → `404` (§7) |
 | RG3 (appels séquentiels) | `GetForecastByAddress.execute` (§3.3), vérifié par test unitaire §9.3 |
+| RG4 (température, grandeur commune aux fournisseurs) | `HourlyForecast.temperature` (§3.2), traduit par chaque adaptateur météo (§3.4) |
 | RG5 (pas de fuite technique) | Encapsulation dans les adaptateurs + `errorHandler` RFC 7807 (§3.4, §7.2) |
+| RG7 (fournisseur configurable sans recompilation) | `GEOCODING_PROVIDER`/`WEATHER_PROVIDER` (env.ts) + composition root conditionnelle (§3.6), vérifié par tests de contrat (§9.5) et par le test e2e de permutation (§9.7) |
 | UC1 A3/A4/A5 (pannes externes) | `UpstreamServiceError`, timeouts + retry + circuit breaker (§3.4, §3.7, §10) |
 | Quota de requêtes (`429`) | `rateLimiter` (`express-rate-limit`, §3.5, §10) |
 | Testabilité (SFD §7) | Ports + DI par constructeur, aucun I/O dans les tests unitaires, décorateurs testés isolément (§9) |
