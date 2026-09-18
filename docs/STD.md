@@ -104,7 +104,8 @@ Le projet vit directement à la racine du dépôt (pas de sous-dossier applicati
 │   │
 │   ├── config/
 │   │   ├── env.ts                  # lecture + validation des variables d'env
-│   │   └── container.ts            # composition root (câblage des dépendances)
+│   │   ├── tokens.ts                # jetons d'injection tsyringe (Symbol)
+│   │   └── container.ts            # composition root (registrations tsyringe)
 │   │
 │   ├── logger.ts                   # instance Pino partagée
 │   └── server.ts                   # point d'entrée (bootstrap Express)
@@ -234,14 +235,15 @@ export class UpstreamServiceError extends DomainError {
 
 ### 3.3 La couche application (cas d'usage)
 
-Un seul cas d'usage pour ce TP, injecté par constructeur (DI recommandée par le cours) :
+Un seul cas d'usage pour ce TP, injecté par constructeur (DI recommandée par le cours, réalisée via tsyringe — cf. §3.6) :
 
 ```typescript
 // application/GetForecastByAddress.ts
+@injectable()
 export class GetForecastByAddress {
   constructor(
-    private readonly geocoding: GeocodingPort,
-    private readonly weather: WeatherPort,
+    @inject(TOKENS.GeocodingPort) private readonly geocoding: GeocodingPort,
+    @inject(TOKENS.WeatherPort) private readonly weather: WeatherPort,
   ) {}
 
   async execute(rawAddress: string): Promise<ForecastResult> {
@@ -254,7 +256,7 @@ export class GetForecastByAddress {
 }
 ```
 
-**Important :** ce cas d'usage ne connaît rien du cache, du retry ou du circuit breaker mis en œuvre autour des adaptateurs (§3.7). Ces préoccupations sont entièrement encapsulées derrière `GeocodingPort`/`WeatherPort` — c'est précisément l'intérêt de l'architecture hexagonale : la résilience est un détail d'infrastructure, invisible du métier et des tests unitaires du cas d'usage (§9.3).
+**Important :** ce cas d'usage ne connaît rien du cache, du retry ou du circuit breaker mis en œuvre autour des adaptateurs (§3.7). Ces préoccupations sont entièrement encapsulées derrière `GeocodingPort`/`WeatherPort` — c'est précisément l'intérêt de l'architecture hexagonale : la résilience est un détail d'infrastructure, invisible du métier et des tests unitaires du cas d'usage (§9.3). Les décorateurs `@injectable`/`@inject` couplent la classe à tsyringe pour la résolution automatique, mais la signature du constructeur reste exprimée en termes de ports du domaine : le cas d'usage s'instancie et se teste identiquement avec un simple `new GetForecastByAddress(fakeGeocoding, fakeWeather)`, sans jamais passer par le conteneur (§9.3).
 
 ### 3.4 Adaptateurs sortants (infrastructure/outbound)
 
@@ -264,11 +266,12 @@ Chaque service externe = un adaptateur = une seule responsabilité (haute cohés
 // infrastructure/outbound/NominatimGeocodingAdapter.ts
 const NOMINATIM_USER_AGENT = "tp-meteo-app/1.0 (contact: mesropaghumyan@outlook.fr)";
 
+@injectable()
 export class NominatimGeocodingAdapter implements GeocodingPort {
   constructor(
-    private readonly httpClient: HttpClient,
-    private readonly baseUrl: string,
-    private readonly logger: Logger,
+    @inject(CircuitBreakerHttpClient) private readonly httpClient: HttpClient,
+    @inject(TOKENS.NominatimBaseUrl) private readonly baseUrl: string,
+    @inject(TOKENS.Logger) private readonly logger: Logger,
   ) {}
 
   async locate(address: Address): Promise<Coordinates> {
@@ -337,39 +340,64 @@ Le contrôleur ne contient **aucune logique métier** : il traduit HTTP ↔ doma
 
 ### 3.6 Composition root — IoC / DI
 
-Conformément au cours (Partie 3 : *le conteneur IoC fait le travail*) et à la règle de « limitation des dépendances » du CLAUDE.md :
+Conformément au cours (Partie 3 : *le conteneur IoC fait le travail*) :
 
 | Option | Description | Choix retenu |
 |---|---|---|
-| **A. Câblage manuel** (composition root en TypeScript pur) | Pas de dépendance tierce ; explicite, simple, suffisant pour la taille du projet. | ✅ **Retenu** pour ce TP |
-| **B. InversifyJS** (conteneur IoC dédié, cité dans le cours) | Utile si le graphe de dépendances devient complexe. | Non retenu : sur-ingénierie pour ce graphe (KISS, « limitation des dépendances » du CLAUDE.md) |
+| **A. Câblage manuel** (composition root en TypeScript pur, `new` explicites) | Pas de dépendance tierce ; explicite, mais chaque nouvel adaptateur oblige à retoucher `container.ts` à la main. | Écarté (choix initial du TP, révisé) |
+| **B. tsyringe + reflect-metadata** (conteneur IoC léger, décorateurs) | Le graphe est résolu par réflexion de type à partir des décorateurs `@injectable`/`@inject` ; `container.ts` ne fait plus que des `register(...)`, jamais de `new` d'objet métier. | ✅ **Retenu** |
+| **C. InversifyJS** (conteneur IoC plus complet, cité dans le cours) | API similaire à tsyringe mais plus lourde (modules, `bind().to()`, etc.) pour un graphe de cette taille. | Non retenu : tsyringe couvre le même besoin avec une API plus fine (KISS) |
 
-La composition root assemble maintenant explicitement la **chaîne de décoration** de résilience (§3.7) — tout le câblage reste visible en un seul endroit, ce qui est justement l'intérêt d'un composition root plutôt que d'un conteneur magique :
+**Pourquoi ce choix a été révisé :** la §3.6 justifiait initialement le câblage manuel par KISS et « limitation des dépendances ». Ce TP portant justement sur l'IoC (cours, Partie 3), la démonstration d'un vrai conteneur DI a été jugée plus fidèle à l'objectif pédagogique que le câblage manuel — d'où l'introduction de tsyringe, en gardant la même architecture de ports/adaptateurs/décorateurs (§3.4, §3.7) : seule la façon de câbler les objets change, pas la structure du code métier.
+
+**Mécanique tsyringe :**
+
+- Toute classe injectée porte `@injectable()`, et chacun de ses paramètres de constructeur porte `@inject(TOKEN)`.
+- Un paramètre typé par une **classe concrète** (ex. `CircuitBreakerHttpClient`) peut être injecté en pointant directement cette classe comme jeton (`@inject(CircuitBreakerHttpClient)`) — tsyringe la résout par réflexion, sans enregistrement explicite.
+- Un paramètre typé par une **interface du domaine** (`GeocodingPort`, `WeatherPort`), une **primitive** (URL de base, options de configuration) ou lorsque **plusieurs classes implémentent le même rôle** (ex. la chaîne `FetchHttpClient → RetryHttpClient → CircuitBreakerHttpClient` décore toutes `HttpClient`) ne peut pas être résolu par réflexion (les interfaces sont effacées à la compilation TypeScript) : il faut un jeton explicite, déclaré dans `config/tokens.ts` (`Symbol`) et enregistré dans le container.
+- `reflect-metadata` est un polyfill requis par `emitDecoratorMetadata` (activé dans `tsconfig.json`) : il doit être importé une seule fois, avant toute classe décorée — au tout début de `server.ts` pour l'exécution normale, et via `setupFiles` de Jest pour les tests.
+
+```typescript
+// config/tokens.ts
+export const TOKENS = {
+  Logger: Symbol("Logger"),
+  GeocodingPort: Symbol("GeocodingPort"),
+  WeatherPort: Symbol("WeatherPort"),
+  NominatimBaseUrl: Symbol("NominatimBaseUrl"),
+  OpenMeteoBaseUrl: Symbol("OpenMeteoBaseUrl"),
+  // ... options de FetchHttpClient / RetryHttpClient / CircuitBreakerHttpClient / CachedGeocodingAdapter
+} as const;
+```
 
 ```typescript
 // config/container.ts — composition root
-export function buildContainer(env: Env, logger: Logger) {
-  const baseHttpClient = new FetchHttpClient({ timeoutMs: env.HTTP_TIMEOUT_MS });
+export function buildContainer(env: Env, logger: Logger): Container {
+  const container = rootContainer.createChildContainer();
 
-  const resilientHttpClient = new CircuitBreakerHttpClient(
-    new RetryHttpClient(baseHttpClient, { maxAttempts: 3, baseDelayMs: 200 }),
-    { failureThreshold: 5, resetTimeoutMs: 30_000 },
-    logger,
-  );
+  container.registerInstance(TOKENS.Logger, logger);
+  container.registerInstance(TOKENS.NominatimBaseUrl, env.NOMINATIM_BASE_URL);
+  container.registerInstance(TOKENS.OpenMeteoBaseUrl, env.OPEN_METEO_BASE_URL);
+  container.registerInstance(TOKENS.FetchHttpClientOptions, { timeoutMs: env.HTTP_TIMEOUT_MS });
+  container.registerInstance(TOKENS.RetryOptions, { maxAttempts: 3, baseDelayMs: 200 });
+  container.registerInstance(TOKENS.CircuitBreakerOptions, { failureThreshold: 5, resetTimeoutMs: 30_000 });
+  container.registerInstance(TOKENS.CachedGeocodingAdapterOptions, { ttlMs: env.GEOCODING_CACHE_TTL_MS });
 
-  const geocodingAdapter = new CachedGeocodingAdapter(
-    new NominatimGeocodingAdapter(resilientHttpClient, env.NOMINATIM_BASE_URL, logger),
-    { ttlMs: env.GEOCODING_CACHE_TTL_MS },
-  );
-  const weatherAdapter = new OpenMeteoWeatherAdapter(resilientHttpClient, env.OPEN_METEO_BASE_URL, logger);
+  // Singleton scopé à ce container : les deux adaptateurs partagent la même
+  // chaîne retry + circuit breaker (cf. §3.7).
+  container.registerSingleton(CircuitBreakerHttpClient);
 
-  const getForecastByAddress = new GetForecastByAddress(geocodingAdapter, weatherAdapter);
+  container.register(TOKENS.GeocodingPort, { useClass: CachedGeocodingAdapter });
+  container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+
+  const getForecastByAddress = container.resolve(GetForecastByAddress);
 
   return { getForecastByAddress };
 }
 ```
 
-Toute injection se fait **par constructeur** (forme recommandée par le cours), jamais via singleton global ni instanciation `new` au fil de l'eau.
+**`createChildContainer()` plutôt que le container global :** `buildContainer` est appelé une fois par instance d'application (`createApp()`), y compris plusieurs fois dans les tests (§9.7). Un *child container* isole les registrations et les singletons d'un appel à l'autre — sans lui, le cache de géocodage et l'état du circuit breaker d'un test fuiteraient vers le test suivant, puisque le container global de tsyringe est un module partagé au sein d'un même fichier de test.
+
+Toute injection se fait **par constructeur** (forme recommandée par le cours), jamais via singleton global implicite ni instanciation `new` au fil de l'eau : `container.ts` ne contient plus aucun `new` d'objet métier — seulement des `register*` déclaratifs et un unique `container.resolve(GetForecastByAddress)` qui déclenche la construction récursive de tout le graphe.
 
 ### 3.7 Résilience des adaptateurs sortants
 
@@ -389,12 +417,13 @@ flowchart LR
 
 ```typescript
 // infrastructure/outbound/CachedGeocodingAdapter.ts
+@injectable()
 export class CachedGeocodingAdapter implements GeocodingPort {
   private readonly cache = new Map<string, { value: Coordinates; expiresAt: number }>();
 
   constructor(
-    private readonly delegate: GeocodingPort,
-    private readonly options: { ttlMs: number },
+    @inject(NominatimGeocodingAdapter) private readonly delegate: GeocodingPort,
+    @inject(TOKENS.CachedGeocodingAdapterOptions) private readonly options: { ttlMs: number },
   ) {}
 
   async locate(address: Address): Promise<Coordinates> {
@@ -416,10 +445,11 @@ export class CachedGeocodingAdapter implements GeocodingPort {
 
 ```typescript
 // infrastructure/outbound/http/RetryHttpClient.ts
+@injectable()
 export class RetryHttpClient implements HttpClient {
   constructor(
-    private readonly delegate: HttpClient,
-    private readonly options: { maxAttempts: number; baseDelayMs: number },
+    @inject(FetchHttpClient) private readonly delegate: HttpClient,
+    @inject(TOKENS.RetryOptions) private readonly options: { maxAttempts: number; baseDelayMs: number },
   ) {}
 
   async getJson<T>(url: string, params: Record<string, string>, opts?: RequestOptions): Promise<T> {
@@ -447,15 +477,17 @@ Limité aux appels `GET` (idempotents) — cohérent avec le seul type d'appel u
 // infrastructure/outbound/http/CircuitBreakerHttpClient.ts
 type CircuitState = "closed" | "open" | "half-open";
 
+@injectable()
 export class CircuitBreakerHttpClient implements HttpClient {
   private state: CircuitState = "closed";
   private failureCount = 0;
   private openedAt = 0;
 
   constructor(
-    private readonly delegate: HttpClient,
+    @inject(RetryHttpClient) private readonly delegate: HttpClient,
+    @inject(TOKENS.CircuitBreakerOptions)
     private readonly options: { failureThreshold: number; resetTimeoutMs: number },
-    private readonly logger: Logger,
+    @inject(TOKENS.Logger) private readonly logger: Logger,
   ) {}
 
   async getJson<T>(url: string, params: Record<string, string>, opts?: RequestOptions): Promise<T> {
@@ -507,7 +539,7 @@ export class CircuitBreakerHttpClient implements HttpClient {
 | Rate limiting entrant | **`express-rate-limit`** | Pas d'équivalent simple et fiable dans la stdlib Express ; librairie légère, largement adoptée, protège contre l'abus de l'API et l'amplification vers Nominatim (§3.7, §10). |
 | Validation d'entrée | **Zod** | Fail-fast dès la couche externe, schémas déclaratifs et testables. |
 | Logs | **Pino** | Logs structurés JSON performants, contexte MDC-like. |
-| DI / IoC | **Composition root manuel (TypeScript pur)** | Cf. §3.6. |
+| DI / IoC | **tsyringe + `reflect-metadata`** | Conteneur IoC léger à décorateurs (`@injectable`/`@inject`) ; `container.ts` ne fait plus de `new` d'objet métier (cf. §3.6). |
 | Tests | **Jest + Supertest** | Standard Node/TS ; tests HTTP sans serveur réseau réel. |
 | Mock HTTP (tests) | **MSW (Mock Service Worker)** | Intercepte les appels sortants aux frontières. |
 | Données de test aléatoires | **`@faker-js/faker`** | Génération dynamique de jeux de données. |
@@ -520,7 +552,8 @@ export class CircuitBreakerHttpClient implements HttpClient {
 | **Adapter** | `NominatimGeocodingAdapter`, `OpenMeteoWeatherAdapter` | Traduit une API externe hétérogène vers un port métier stable. |
 | **Decorator** | `CachedGeocodingAdapter` (autour d'un `GeocodingPort`), `RetryHttpClient` et `CircuitBreakerHttpClient` (autour d'un `HttpClient`) | Ajoute cache/retry/circuit breaker **sans modifier** les adaptateurs existants ni le domaine — chaque décorateur est testable isolément (§9). Illustre le pattern Decorator explicitement cité par le CLAUDE.md, en complément du pattern Adapter ci-dessus. |
 | **Value Object** | `Address`, `Coordinates` | Immutabilité, validation centralisée, égalité par valeur. |
-| **Factory (fonction fabrique)** | `buildContainer`, `createForecastRouter` | Centralise la construction et le câblage des objets complexes, y compris la chaîne de décorateurs. |
+| **Factory (fonction fabrique)** | `createForecastRouter` | Centralise la construction du routeur Express. |
+| **IoC Container (tsyringe)** | `buildContainer` (`config/container.ts`, `config/tokens.ts`) | Résout par réflexion tout le graphe de dépendances (ports, adaptateurs, chaîne de décorateurs) à partir des `@injectable`/`@inject` — remplace la construction manuelle par des enregistrements déclaratifs (cf. §3.6). |
 | **Strategy (extension future)** | `WeatherPort` / `GeocodingPort` | Permettrait d'ajouter un fournisseur alternatif en cas de dédoublement futur (§13), sans sur-ingénierie tant que le besoin n'existe pas. |
 | **Chain of Responsibility (implicite)** | Middlewares Express (`correlationId` → `rateLimiter` → `validateForecastQuery` → contrôleur → `errorHandler`) | Traitement global et uniforme des requêtes/erreurs. |
 
