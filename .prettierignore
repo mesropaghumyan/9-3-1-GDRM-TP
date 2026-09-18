@@ -1,0 +1,7 @@
+dist
+coverage
+node_modules
+
+# Contenu du cours et documentation de spécification : formatage volontaire, ne pas reformater
+docs/
+CLAUDE.md
