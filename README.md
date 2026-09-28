@@ -1,20 +1,22 @@
-# TP1/TP2/TP3 — API Météo par adresse, multi-fournisseurs, mode démo
+# TP1→TP4 — API Météo par adresse, multi-fournisseurs, mode démo, licences auditées
 
-API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Le fournisseur de chaque service est configurable sans recompilation (TP2), un mode démo permet de répondre sans jamais les appeler (TP3), et le format de réponse est strictement identique dans tous les cas. Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
+API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Le fournisseur de chaque service est configurable sans recompilation (TP2), un mode démo permet de répondre sans jamais les appeler (TP3), et le format de réponse est strictement identique dans tous les cas. Les licences de toutes ses dépendances sont auditées et contrôlées en CI (TP4). Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
 
 ## Documentation
 
 Toute la spécification du projet vit dans [`docs/`](./docs) :
 
-| Document                                     | Contenu                                                                                                                                                         |
-| -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| [`docs/TP_1.md`](./docs/TP_1.md)             | Énoncé officiel du TP1 (API météo).                                                                                                                             |
-| [`docs/TP_2.md`](./docs/TP_2.md)             | Énoncé officiel du TP2 (changement de fournisseurs).                                                                                                            |
-| [`docs/TP_3.md`](./docs/TP_3.md)             | Énoncé officiel du TP3 (mode démo, cache, format de sortie unifié).                                                                                             |
-| [`docs/SUPPORT_J1.md`](./docs/SUPPORT_J1.md) | Support de cours, jour 1 (dépendances, couplage, IoC/DI).                                                                                                       |
-| [`docs/SUPPORT_J2.md`](./docs/SUPPORT_J2.md) | Support de cours, jour 2 (boundary/seam, Adapter/Facade/Strategy/Factory, licences).                                                                            |
-| [`docs/SFD.md`](./docs/SFD.md)               | **Spécifications Fonctionnelles Détaillées** : cas d'utilisation, règles de gestion, contrat d'API, critères d'acceptation.                                     |
-| [`docs/STD.md`](./docs/STD.md)               | **Spécifications Techniques Détaillées** : architecture hexagonale, choix technologiques, design patterns, gestion des erreurs, résilience, stratégie de tests. |
+| Document                                               | Contenu                                                                                                                                                         |
+| ------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [`docs/TP_1.md`](./docs/TP_1.md)                       | Énoncé officiel du TP1 (API météo).                                                                                                                             |
+| [`docs/TP_2.md`](./docs/TP_2.md)                       | Énoncé officiel du TP2 (changement de fournisseurs).                                                                                                            |
+| [`docs/TP_3.md`](./docs/TP_3.md)                       | Énoncé officiel du TP3 (mode démo, cache, format de sortie unifié).                                                                                             |
+| [`docs/TP_4.md`](./docs/TP_4.md)                       | Énoncé officiel du TP4 (audit de conformité des licences).                                                                                                      |
+| [`docs/tp4/RAPPORT_TP4.md`](./docs/tp4/RAPPORT_TP4.md) | **Rapport TP4** : scan brut, classification des licences, fiches de décision, configuration CI.                                                                 |
+| [`docs/SUPPORT_J1.md`](./docs/SUPPORT_J1.md)           | Support de cours, jour 1 (dépendances, couplage, IoC/DI).                                                                                                       |
+| [`docs/SUPPORT_J2.md`](./docs/SUPPORT_J2.md)           | Support de cours, jour 2 (boundary/seam, Adapter/Facade/Strategy/Factory, licences).                                                                            |
+| [`docs/SFD.md`](./docs/SFD.md)                         | **Spécifications Fonctionnelles Détaillées** : cas d'utilisation, règles de gestion, contrat d'API, critères d'acceptation.                                     |
+| [`docs/STD.md`](./docs/STD.md)                         | **Spécifications Techniques Détaillées** : architecture hexagonale, choix technologiques, design patterns, gestion des erreurs, résilience, stratégie de tests. |
 
 Les règles de développement (architecture, qualité, tests, gestion des erreurs, observabilité) sont définies dans [`CLAUDE.md`](./CLAUDE.md).
 
@@ -30,7 +32,7 @@ Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations réelles s�
 
 ```
 .
-├── docs/                        # SFD, STD, TP1/TP2/TP3, support de cours
+├── docs/                        # SFD, STD, TP1→TP4, support de cours, tp4/ (rapport + scan brut)
 ├── src/
 │   ├── domain/                  # Cœur métier : Value Objects, ports, erreurs, HourlyForecastEntry[]
 │   ├── application/             # Cas d'usage GetForecastByAddress (réutilisé tel quel réel/démo)
@@ -46,6 +48,9 @@ Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations réelles s�
 │   ├── contract/                # Suites de tests de contrat partagées par port (GeocodingPort, WeatherPort)
 │   ├── integration/             # Chaque adaptateur passé au contrat de son port, HTTP mocké (MSW)
 │   └── e2e/                     # Supertest sur l'app complète, y compris le mode démo
+├── scripts/licenses/            # Politique de licences SPDX (TP4), exécutée en CI
+├── .github/                     # Workflow CI + Dependabot
+├── license-policy.json          # Liste blanche des licences autorisées
 ├── Dockerfile
 ├── docker-compose.yml
 └── CLAUDE.md                    # Règles de développement du projet
@@ -129,7 +134,20 @@ npm run lint         # ESLint
 npm run format:check # Prettier
 npm run typecheck    # tsc --noEmit
 npm test             # Jest (unitaires + e2e)
+npm run licenses:check # Barrière de licences (TP4) : échoue hors liste blanche
 ```
+
+## Conformité des licences et CI (TP4)
+
+Toutes les dépendances (directes et transitives, prod et dev) sont scannées par `license-checker`, puis évaluées contre la liste blanche SPDX unique [`license-policy.json`](./license-policy.json) par un évaluateur testé ([`scripts/licenses/`](./scripts/licenses)) qui interprète réellement `OR` / `AND` / `WITH`.
+
+```bash
+npm run licenses:check   # 0 = conforme, 1 = licence refusée (copyleft, propriétaire ou non identifiée)
+npm run licenses:report  # régénère le scan brut dans docs/tp4/
+npm run sbom             # SBOM CycloneDX des dépendances de production (reports/sbom.cdx.json)
+```
+
+La CI GitHub Actions ([`.github/workflows/ci.yml`](./.github/workflows/ci.yml)) exécute sur chaque PR vers `master` les jobs `quality`, `licenses`, `audit` et `docker`, tous requis par la protection de branche. Ajouter une licence à la liste blanche exige une fiche de décision dans le [rapport TP4](./docs/tp4/RAPPORT_TP4.md).
 
 ## Stack technique
 
@@ -140,5 +158,6 @@ npm test             # Jest (unitaires + e2e)
 - **Tests :** Jest + Supertest
 - **Lint / Format :** ESLint + Prettier
 - **Conteneurisation :** Docker
+- **CI :** GitHub Actions, Dependabot, audit de licences (`license-checker` + politique SPDX)
 
 Le détail des choix et leur justification se trouve dans le [STD](./docs/STD.md).
