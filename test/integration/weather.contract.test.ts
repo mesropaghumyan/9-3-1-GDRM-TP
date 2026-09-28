@@ -18,8 +18,20 @@ beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 afterEach(() => server.resetHandlers());
 afterAll(() => server.close());
 
+const MS_PER_HOUR = 3_600_000;
+
+/** Horodatages ISO 8601 plausibles, un par entrée — peu importe leur valeur exacte pour ce test. */
+function fakeHourlyTimes(count: number): string[] {
+  const now = Date.now();
+  return Array.from({ length: count }, (_, index) =>
+    new Date(now + index * MS_PER_HOUR).toISOString(),
+  );
+}
+
 function metNorwayTimeseries(temperatures: number[]) {
-  return temperatures.map((air_temperature) => ({
+  const times = fakeHourlyTimes(temperatures.length);
+  return temperatures.map((air_temperature, index) => ({
+    time: times[index],
     data: { instant: { details: { air_temperature } } },
   }));
 }
@@ -35,7 +47,9 @@ describeWeatherPortContract({
   registerSuccess: (temperatures) =>
     server.use(
       http.get(OPEN_METEO_FORECAST_URL, () =>
-        HttpResponse.json({ hourly: { temperature_2m: temperatures } }),
+        HttpResponse.json({
+          hourly: { time: fakeHourlyTimes(temperatures.length), temperature_2m: temperatures },
+        }),
       ),
     ),
   registerMalformedResponse: () =>
@@ -44,7 +58,7 @@ describeWeatherPortContract({
     server.use(
       http.get(OPEN_METEO_FORECAST_URL, async () => {
         await delay(delayMs);
-        return HttpResponse.json({ hourly: { temperature_2m: [] } });
+        return HttpResponse.json({ hourly: { time: [], temperature_2m: [] } });
       }),
     ),
 });

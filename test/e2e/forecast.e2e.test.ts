@@ -10,6 +10,20 @@ const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
 const MET_NORWAY_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact";
 const RATE_LIMIT_MAX_FOR_TEST = 2;
 
+// Fixes (et non générés) pour permettre des assertions exactes sur `hourly` (TP3, format unifié).
+const SAMPLE_HOURLY_TIMES = [
+  "2026-01-01T00:00:00.000Z",
+  "2026-01-01T01:00:00.000Z",
+  "2026-01-01T02:00:00.000Z",
+];
+
+function expectedHourly(temperatures: number[]) {
+  return temperatures.map((temperatureCelsius, index) => ({
+    time: SAMPLE_HOURLY_TIMES[index],
+    temperatureCelsius,
+  }));
+}
+
 // Fournisseurs par défaut (cf. .env.example) : BAN pour le géocodage, Open-Meteo pour la météo.
 function mockGeocodingSuccess(lat = 44.13, lon = 4.08) {
   return http.get(BAN_URL, () =>
@@ -19,7 +33,12 @@ function mockGeocodingSuccess(lat = 44.13, lon = 4.08) {
 
 function mockWeatherSuccess(temperatures: number[] = [12.4, 13.1, 15.6]) {
   return http.get(OPEN_METEO_URL, () =>
-    HttpResponse.json({ hourly: { temperature_2m: temperatures } }),
+    HttpResponse.json({
+      hourly: {
+        time: SAMPLE_HOURLY_TIMES.slice(0, temperatures.length),
+        temperature_2m: temperatures,
+      },
+    }),
   );
 }
 
@@ -56,7 +75,7 @@ describe("GET /forecast", () => {
       address,
       latitude: 44.13,
       longitude: 4.08,
-      hourly: { temperature: temperatures },
+      hourly: expectedHourly(temperatures),
     });
   });
 
@@ -150,7 +169,8 @@ describe("GET /forecast", () => {
         http.get(MET_NORWAY_URL, () =>
           HttpResponse.json({
             properties: {
-              timeseries: temperatures.map((air_temperature) => ({
+              timeseries: temperatures.map((air_temperature, index) => ({
+                time: SAMPLE_HOURLY_TIMES[index],
                 data: { instant: { details: { air_temperature } } },
               })),
             },
@@ -166,7 +186,7 @@ describe("GET /forecast", () => {
         address,
         latitude: 44.13,
         longitude: 4.08,
-        hourly: { temperature: temperatures },
+        hourly: expectedHourly(temperatures),
       });
     } finally {
       restoreEnvVar("GEOCODING_PROVIDER", originalGeocodingProvider);

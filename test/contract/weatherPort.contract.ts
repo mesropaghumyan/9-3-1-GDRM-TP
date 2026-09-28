@@ -37,9 +37,13 @@ export function describeWeatherPortContract(fixture: WeatherContractFixture): vo
 
       const forecast = await adapter.getHourlyForecast(coordinates);
 
-      expect(forecast.temperature).toEqual(temperatures);
-      // Aucun DTO propre au fournisseur ne fuit hors de l'adaptateur (TP2, point 4).
-      expect(Object.keys(forecast)).toEqual(["temperature"]);
+      expect(forecast.map((entry) => entry.temperatureCelsius)).toEqual(temperatures);
+      forecast.forEach((entry) => {
+        // Horodatage normalisé ISO 8601, identique quel que soit le fournisseur (TP3).
+        expect(new Date(entry.time).toISOString()).toBe(entry.time);
+        // Aucun DTO propre au fournisseur ne fuit hors de l'adaptateur (TP2 point 4, TP3).
+        expect(Object.keys(entry)).toEqual(["time", "temperatureCelsius"]);
+      });
     });
 
     it("getHourlyForecast_reponseMalformeeLeveUpstreamServiceError", async () => {

@@ -2,6 +2,8 @@ import { container as rootContainer } from "tsyringe";
 import { GetForecastByAddress } from "../application/GetForecastByAddress";
 import { BanGeocodingAdapter } from "../infrastructure/outbound/BanGeocodingAdapter";
 import { CachedGeocodingAdapter } from "../infrastructure/outbound/CachedGeocodingAdapter";
+import { DemoGeocodingAdapter } from "../infrastructure/outbound/DemoGeocodingAdapter";
+import { DemoWeatherAdapter } from "../infrastructure/outbound/DemoWeatherAdapter";
 import { CircuitBreakerHttpClient } from "../infrastructure/outbound/http/CircuitBreakerHttpClient";
 import { MetNorwayWeatherAdapter } from "../infrastructure/outbound/MetNorwayWeatherAdapter";
 import { NominatimGeocodingAdapter } from "../infrastructure/outbound/NominatimGeocodingAdapter";
@@ -17,6 +19,8 @@ const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 30_000;
 
 export interface Container {
   getForecastByAddress: GetForecastByAddress;
+  /** Mode démo (TP3) : mêmes ports, adaptateurs sans I/O — cf. docs/TP_3.md. */
+  getDemoForecastByAddress: GetForecastByAddress;
 }
 
 /**
@@ -74,5 +78,15 @@ export function buildContainer(env: Env, logger: Logger): Container {
 
   const getForecastByAddress = container.resolve(GetForecastByAddress);
 
-  return { getForecastByAddress };
+  // Mode démo (TP3) — Strategy explicitement illustrée par le cours
+  // (SUPPORT_J2.md, Partie 6) : container enfant du précédent, qui hérite de
+  // tout (Logger, etc.) sauf des deux liaisons ci-dessous, redirigées vers
+  // des adaptateurs sans I/O. Construit une fois au démarrage comme le reste
+  // du graphe (§3.6) : aucun coût ni résolution DI supplémentaire par requête.
+  const demoContainer = container.createChildContainer();
+  demoContainer.register(TOKENS.GeocodingPort, { useClass: DemoGeocodingAdapter });
+  demoContainer.register(TOKENS.WeatherPort, { useClass: DemoWeatherAdapter });
+  const getDemoForecastByAddress = demoContainer.resolve(GetForecastByAddress);
+
+  return { getForecastByAddress, getDemoForecastByAddress };
 }

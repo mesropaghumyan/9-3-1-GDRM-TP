@@ -25,16 +25,18 @@ const FORECAST_RESPONSE_SCHEMA = {
     latitude: { type: "number", example: 44.13 },
     longitude: { type: "number", example: 4.08 },
     hourly: {
-      type: "object",
-      properties: {
-        temperature: {
-          type: "array",
-          items: { type: "number" },
-          description: "Température horaire (°C), quel que soit le fournisseur météo actif.",
-          example: [12.4, 11.8, 11.1, 10.6, 12.9, 16.2],
+      type: "array",
+      description:
+        "Prévision horaire — structure et noms de champs identiques quel que soit le " +
+        "fournisseur météo actif ou le mode démo (TP3, format de sortie unifié).",
+      items: {
+        type: "object",
+        properties: {
+          time: { type: "string", format: "date-time", example: "2026-09-28T14:00:00.000Z" },
+          temperatureCelsius: { type: "number", example: 24.3 },
         },
+        required: ["time", "temperatureCelsius"],
       },
-      required: ["temperature"],
     },
   },
   required: ["address", "latitude", "longitude", "hourly"],
@@ -102,13 +104,29 @@ export const openApiDocument = {
             schema: { type: "string", minLength: 1 },
             example: "Alès",
           },
+          {
+            name: "demo",
+            in: "query",
+            required: false,
+            description:
+              'Si "true", renvoie des données simulées sans appeler aucun service externe ' +
+              "(ni géocodage, ni météo) — cf. docs/TP_3.md, mode démo.",
+            schema: { type: "string", enum: ["true", "false"] },
+            example: "true",
+          },
         ],
         responses: {
           "200": {
-            description: "Prévisions obtenues avec succès (RG1-RG4).",
+            description: "Prévisions obtenues avec succès (RG1-RG4, RG8 en mode démo).",
             content: {
               "application/json": {
                 schema: { $ref: "#/components/schemas/ForecastResponse" },
+                example: {
+                  address: "Alès",
+                  latitude: 44.1279,
+                  longitude: 4.0817,
+                  hourly: [{ time: "2026-09-28T14:00:00.000Z", temperatureCelsius: 24.3 }],
+                },
               },
             },
           },

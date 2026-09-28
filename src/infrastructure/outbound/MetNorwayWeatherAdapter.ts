@@ -20,6 +20,7 @@ const MET_NORWAY_USER_AGENT = "tp-meteo-app/1.0 (contact: mesropaghumyan@outlook
 interface MetNorwayResponse {
   properties: {
     timeseries: Array<{
+      time: string;
       data: {
         instant: {
           details: { air_temperature?: number } & Record<string, unknown>;
@@ -33,8 +34,8 @@ interface MetNorwayResponse {
  * Adaptateur du port `WeatherPort` vers MET Norway Locationforecast
  * (cf. docs/TP_2.md). Contrairement à Open-Meteo, ce fournisseur n'expose
  * aucun champ de rayonnement solaire — d'où le contrat de domaine basé sur
- * la température (`HourlyForecast.temperature`), disponible chez les deux
- * fournisseurs (cf. docs/domain/model/WeatherForecast.ts, RG4).
+ * la température (`HourlyForecastEntry.temperatureCelsius`), disponible chez
+ * les deux fournisseurs (cf. src/domain/model/WeatherForecast.ts, RG4).
  */
 @injectable()
 export class MetNorwayWeatherAdapter implements WeatherPort {
@@ -51,13 +52,19 @@ export class MetNorwayWeatherAdapter implements WeatherPort {
         { lat: String(coordinates.latitude), lon: String(coordinates.longitude) },
         { headers: { "User-Agent": MET_NORWAY_USER_AGENT } },
       );
-      const temperature = response.properties.timeseries.map(
+      const temperatures = response.properties.timeseries.map(
         (entry) => entry.data.instant.details.air_temperature,
       );
-      if (temperature.some((value) => typeof value !== "number")) {
+      if (temperatures.some((value) => typeof value !== "number")) {
         throw new Error("Réponse MET Norway incomplète : température horaire manquante.");
       }
-      return { temperature: temperature as number[] };
+      // Horodatage normalisé (TP3, format de sortie unifié) : MET Norway renvoie déjà
+      // un ISO 8601 complet, mais on repasse par Date pour garantir le même format
+      // que les autres fournisseurs (ex. Open-Meteo), quel que soit celui actif.
+      return response.properties.timeseries.map((entry, index) => ({
+        time: new Date(entry.time).toISOString(),
+        temperatureCelsius: temperatures[index] as number,
+      }));
     } catch (err) {
       if (err instanceof HttpTimeoutError) {
         this.logger.error({ err }, "Délai dépassé pour l'appel au service météo");

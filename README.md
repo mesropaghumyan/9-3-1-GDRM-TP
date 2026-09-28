@@ -1,6 +1,6 @@
-# TP1/TP2 — API Météo par adresse, multi-fournisseurs
+# TP1/TP2/TP3 — API Météo par adresse, multi-fournisseurs, mode démo
 
-API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Le fournisseur de chaque service est configurable sans recompilation (TP2). Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
+API HTTP qui reçoit une adresse postale et renvoie les prévisions météo du lieu, en enchaînant deux services externes (géocodage puis météo). Le fournisseur de chaque service est configurable sans recompilation (TP2), un mode démo permet de répondre sans jamais les appeler (TP3), et le format de réponse est strictement identique dans tous les cas. Réalisée dans le cadre du module _Gestion des dépendances, risques et maintenabilité_.
 
 ## Documentation
 
@@ -10,7 +10,9 @@ Toute la spécification du projet vit dans [`docs/`](./docs) :
 | -------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | [`docs/TP_1.md`](./docs/TP_1.md)             | Énoncé officiel du TP1 (API météo).                                                                                                                             |
 | [`docs/TP_2.md`](./docs/TP_2.md)             | Énoncé officiel du TP2 (changement de fournisseurs).                                                                                                            |
-| [`docs/SUPPORT_J1.md`](./docs/SUPPORT_J1.md) | Support de cours (dépendances, couplage, IoC/DI).                                                                                                               |
+| [`docs/TP_3.md`](./docs/TP_3.md)             | Énoncé officiel du TP3 (mode démo, cache, format de sortie unifié).                                                                                             |
+| [`docs/SUPPORT_J1.md`](./docs/SUPPORT_J1.md) | Support de cours, jour 1 (dépendances, couplage, IoC/DI).                                                                                                       |
+| [`docs/SUPPORT_J2.md`](./docs/SUPPORT_J2.md) | Support de cours, jour 2 (boundary/seam, Adapter/Facade/Strategy/Factory, licences).                                                                            |
 | [`docs/SFD.md`](./docs/SFD.md)               | **Spécifications Fonctionnelles Détaillées** : cas d'utilisation, règles de gestion, contrat d'API, critères d'acceptation.                                     |
 | [`docs/STD.md`](./docs/STD.md)               | **Spécifications Techniques Détaillées** : architecture hexagonale, choix technologiques, design patterns, gestion des erreurs, résilience, stratégie de tests. |
 
@@ -22,28 +24,28 @@ Les règles de développement (architecture, qualité, tests, gestion des erreur
 
 Le cas d'usage métier (adresse → géocodage → météo, cf. SFD §4) est implémenté selon l'architecture hexagonale décrite dans le STD : domaine pur, ports/adaptateurs, résilience (cache, retry, circuit breaker), gestion d'erreurs RFC 7807, tests unitaires/intégration/e2e.
 
-Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations sélectionnables par variable d'environnement, sans recompilation (TP2) : Nominatim ou BAN pour le géocodage, Open-Meteo ou MET Norway pour la météo — cf. [« Fournisseurs configurables »](#fournisseurs-configurables-tp2) ci-dessous.
+Chaque port (`GeocodingPort`, `WeatherPort`) a deux implémentations réelles sélectionnables par variable d'environnement, sans recompilation (TP2) : Nominatim ou BAN pour le géocodage, Open-Meteo ou MET Norway pour la météo — cf. [« Fournisseurs configurables »](#fournisseurs-configurables-tp2) ci-dessous. Un mode démo (TP3, cf. [« Mode démo »](#mode-démo-tp3)) fournit une troisième implémentation par port, sans aucune I/O, et le format de la réponse (`hourly`) est strictement identique quel que soit le fournisseur ou le mode actif.
 
 ## Structure du dépôt
 
 ```
 .
-├── docs/                        # SFD, STD, TP1/TP2, support de cours
+├── docs/                        # SFD, STD, TP1/TP2/TP3, support de cours
 ├── src/
-│   ├── domain/                  # Cœur métier : Value Objects, ports, erreurs
-│   ├── application/             # Cas d'usage GetForecastByAddress
+│   ├── domain/                  # Cœur métier : Value Objects, ports, erreurs, HourlyForecastEntry[]
+│   ├── application/             # Cas d'usage GetForecastByAddress (réutilisé tel quel réel/démo)
 │   ├── infrastructure/
 │   │   ├── inbound/http/        # Contrôleur, validation, middlewares
-│   │   └── outbound/            # Adaptateurs (Nominatim/BAN, Open-Meteo/MET Norway), résilience HTTP
+│   │   └── outbound/            # Adaptateurs (réels, alternatifs, démo), cache/, résilience HTTP
 │   ├── config/                  # Env, jetons DI (tokens.ts) et composition root (tsyringe)
 │   ├── logger.ts
 │   ├── app.ts                   # Construction de l'application Express (testable)
 │   └── server.ts                # Point d'entrée (bootstrap + écoute HTTP)
 ├── test/
-│   ├── unit/                    # Domaine, application, décorateurs de résilience
+│   ├── unit/                    # Domaine, application, décorateurs de résilience, cache, adaptateurs démo
 │   ├── contract/                # Suites de tests de contrat partagées par port (GeocodingPort, WeatherPort)
 │   ├── integration/             # Chaque adaptateur passé au contrat de son port, HTTP mocké (MSW)
-│   └── e2e/                     # Supertest sur l'app complète
+│   └── e2e/                     # Supertest sur l'app complète, y compris le mode démo
 ├── Dockerfile
 ├── docker-compose.yml
 └── CLAUDE.md                    # Règles de développement du projet
@@ -65,7 +67,7 @@ curl http://localhost:3000/health
 # {"status":"ok"}
 
 curl "http://localhost:3000/forecast?address=Al%C3%A8s"
-# {"address":"Alès","latitude":44.13,"longitude":4.08,"hourly":{"temperature":[...]}}
+# {"address":"Alès","latitude":44.13,"longitude":4.08,"hourly":[{"time":"...","temperatureCelsius":24.3}]}
 ```
 
 ### Fournisseurs configurables (TP2)
@@ -91,6 +93,17 @@ GEOCODING_PROVIDER=nominatim WEATHER_PROVIDER=met-norway npm run dev
 ```
 
 Les deux variables sont indépendantes : chacune peut être changée seule (ex. garder `open-meteo` pour la météo tout en passant à `ban` pour le géocodage). Le contrat de l'API (`GET /forecast`, cf. [SFD §6](./docs/SFD.md)) est strictement identique quel que soit le fournisseur actif — seule la couche infrastructure change.
+
+### Mode démo (TP3)
+
+Le paramètre de requête `demo=true` renvoie des données simulées **sans appeler aucun service externe**, quel que soit le fournisseur configuré :
+
+```bash
+curl "http://localhost:3000/forecast?address=Al%C3%A8s&demo=true"
+# {"address":"Alès","latitude":48.8566,"longitude":2.3522,"hourly":[{"time":"...","temperatureCelsius":18}, ...]}
+```
+
+Seule la valeur exacte `"true"` active le mode démo ; toute autre valeur (absente, `"false"`, etc.) laisse le comportement normal inchangé. La forme de la réponse (`hourly: [{ time, temperatureCelsius }]`) est la même qu'en mode réel — cf. [STD §3.2](./docs/STD.md).
 
 ### Documentation interactive (OpenAPI / Swagger UI)
 

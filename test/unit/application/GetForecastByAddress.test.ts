@@ -18,11 +18,13 @@ function randomCoordinates(): Coordinates {
 }
 
 function randomHourlyForecast(): HourlyForecast {
-  return {
-    temperature: faker.helpers.multiple(() => faker.number.float({ min: -10, max: 40 }), {
-      count: 3,
+  return faker.helpers.multiple(
+    () => ({
+      time: faker.date.soon().toISOString(),
+      temperatureCelsius: faker.number.float({ min: -10, max: 40 }),
     }),
-  };
+    { count: 3 },
+  );
 }
 
 describe("GetForecastByAddress", () => {
