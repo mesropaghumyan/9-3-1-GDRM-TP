@@ -1,0 +1,98 @@
+# Intégration continue : qualité, conformité des licences (TP4), audit de sécurité, image Docker.
+# Chaque job est un "status check" requis par la protection de la branche master.
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  schedule:
+    # Hebdomadaire : les avis de sécurité évoluent même sans modification du code.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+# Moindre privilège : le jeton GitHub n'a que la lecture du dépôt.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      - run: npm ci
+      - run: npm run format:check
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  licenses:
+    name: licenses
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+      # Le scan ne lit que les manifestes installés : aucun script d'installation n'est nécessaire.
+      - run: npm ci --ignore-scripts
+      # Échoue si une licence (directe ou transitive, prod ou dev) sort de license-policy.json.
+      - run: npm run licenses:check
+      # SBOM CycloneDX du code livré (dépendances de production), natif npm : aucun outil ajouté.
+      - run: npm run sbom
+        if: always()
+      - name: Publier le scan brut et le SBOM
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: licenses-scan
+          path: |
+            reports/licenses.json
+            reports/sbom.cdx.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  audit:
+    name: audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+      # Bloquant : vulnérabilité high/critical dans le code livré (dépendances de production).
+      - run: npm audit --omit=dev --audit-level=high
+      # Informatif : l'outillage de dev n'est pas livré, ses alertes sont traitées via Dependabot.
+      - run: npm audit --audit-level=high
+        continue-on-error: true
+
+  docker:
+    name: docker
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: docker build --tag tp-meteo-api:ci .
