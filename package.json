@@ -46,6 +46,7 @@
     "@types/node": "^22.20.3",
     "@types/supertest": "^7.2.1",
     "@types/swagger-ui-express": "^4.1.8",
+    "@wordpress/is-shallow-equal": "^5.56.0",
     "eslint": "^10.10.0",
     "eslint-config-prettier": "^10.1.8",
     "jest": "^30.5.1",
