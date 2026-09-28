@@ -26,3 +26,6 @@ Thumbs.db
 
 # Test artifacts
 *.tsbuildinfo
+
+# Rapports générés (scan de licences, etc.)
+reports/

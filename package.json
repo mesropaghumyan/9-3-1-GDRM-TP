@@ -8,6 +8,9 @@
     "node": ">=22"
   },
   "main": "dist/server.js",
+  "config": {
+    "licenseChecker": "license-checker@25.0.1"
+  },
   "scripts": {
     "dev": "tsx watch src/server.ts",
     "build": "tsc -p tsconfig.json",
@@ -16,9 +19,13 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.jest.json --noEmit",
     "test": "jest",
-    "test:watch": "jest --watch"
+    "test:watch": "jest --watch",
+    "licenses:scan": "npx --yes $npm_package_config_licenseChecker --excludePrivatePackages --json --out reports/licenses.json",
+    "licenses:check": "npm run licenses:scan && tsx scripts/licenses/checkLicenses.ts reports/licenses.json license-policy.json",
+    "licenses:report": "npx --yes $npm_package_config_licenseChecker --excludePrivatePackages --markdown --out docs/tp4/licenses.md && npx --yes $npm_package_config_licenseChecker --excludePrivatePackages --production --markdown --out docs/tp4/licenses-production.md && npx --yes $npm_package_config_licenseChecker --excludePrivatePackages --summary > docs/tp4/licenses-summary.txt",
+    "sbom": "mkdir -p reports && npm sbom --sbom-format=cyclonedx --omit=dev > reports/sbom.cdx.json"
   },
   "dependencies": {
     "dotenv": "^18.0.0",

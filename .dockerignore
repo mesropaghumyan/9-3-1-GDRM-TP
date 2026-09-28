@@ -13,3 +13,7 @@ docs
 .vscode
 .idea
 test
+reports
+.github
+scripts
+license-policy.json

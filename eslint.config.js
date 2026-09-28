@@ -20,7 +20,7 @@ module.exports = tseslint.config(
     },
   },
   {
-    files: ["src/**/*.ts", "test/**/*.ts"],
+    files: ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
     extends: [...tseslint.configs.recommended],
     languageOptions: {
       parserOptions: {

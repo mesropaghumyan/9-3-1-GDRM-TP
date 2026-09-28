@@ -1,5 +1,6 @@
 import { faker } from "@faker-js/faker";
 import { CachedGeocodingAdapter } from "../../../../src/infrastructure/outbound/CachedGeocodingAdapter";
+import { InMemoryCachePort } from "../../../../src/infrastructure/outbound/cache/InMemoryCachePort";
 import { Address } from "../../../../src/domain/model/Address";
 import { Coordinates } from "../../../../src/domain/model/Coordinates";
 import type { GeocodingPort } from "../../../../src/domain/ports/GeocodingPort";
@@ -23,7 +24,9 @@ describe("CachedGeocodingAdapter", () => {
     const address = Address.create(faker.location.city());
     const coordinates = randomCoordinates();
     const delegate: GeocodingPort = { locate: jest.fn().mockResolvedValue(coordinates) };
-    const adapter = new CachedGeocodingAdapter(delegate, { ttlMs: TTL_MS });
+    const adapter = new CachedGeocodingAdapter(delegate, new InMemoryCachePort(), {
+      ttlMs: TTL_MS,
+    });
 
     const result = await adapter.locate(address);
 
@@ -35,7 +38,9 @@ describe("CachedGeocodingAdapter", () => {
     const rawAddress = faker.location.city();
     const coordinates = randomCoordinates();
     const delegate: GeocodingPort = { locate: jest.fn().mockResolvedValue(coordinates) };
-    const adapter = new CachedGeocodingAdapter(delegate, { ttlMs: TTL_MS });
+    const adapter = new CachedGeocodingAdapter(delegate, new InMemoryCachePort(), {
+      ttlMs: TTL_MS,
+    });
     await adapter.locate(Address.create(rawAddress));
 
     const result = await adapter.locate(Address.create(rawAddress));
@@ -48,7 +53,9 @@ describe("CachedGeocodingAdapter", () => {
     const rawAddress = faker.location.city();
     const coordinates = randomCoordinates();
     const delegate: GeocodingPort = { locate: jest.fn().mockResolvedValue(coordinates) };
-    const adapter = new CachedGeocodingAdapter(delegate, { ttlMs: TTL_MS });
+    const adapter = new CachedGeocodingAdapter(delegate, new InMemoryCachePort(), {
+      ttlMs: TTL_MS,
+    });
     await adapter.locate(Address.create(rawAddress));
 
     const result = await adapter.locate(Address.create(rawAddress.toUpperCase()));
@@ -67,7 +74,9 @@ describe("CachedGeocodingAdapter", () => {
         .mockResolvedValueOnce(firstCoordinates)
         .mockResolvedValueOnce(secondCoordinates),
     };
-    const adapter = new CachedGeocodingAdapter(delegate, { ttlMs: SHORT_TTL_MS });
+    const adapter = new CachedGeocodingAdapter(delegate, new InMemoryCachePort(), {
+      ttlMs: SHORT_TTL_MS,
+    });
     await adapter.locate(Address.create(rawAddress));
     await sleep(SHORT_TTL_MS * 3);
 

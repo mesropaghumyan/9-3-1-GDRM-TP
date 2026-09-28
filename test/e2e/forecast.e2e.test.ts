@@ -4,18 +4,53 @@ import { setupServer } from "msw/node";
 import request from "supertest";
 import { createApp } from "../../src/app";
 
+const BAN_URL = "https://api-adresse.data.gouv.fr/search/";
 const NOMINATIM_URL = "https://nominatim.openstreetmap.org/search";
 const OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast";
+const MET_NORWAY_URL = "https://api.met.no/weatherapi/locationforecast/2.0/compact";
 const RATE_LIMIT_MAX_FOR_TEST = 2;
 
-function mockGeocodingSuccess(lat = 44.13, lon = 4.08) {
-  return http.get(NOMINATIM_URL, () => HttpResponse.json([{ lat: String(lat), lon: String(lon) }]));
+// Fixes (et non générés) pour permettre des assertions exactes sur `hourly` (TP3, format unifié).
+const SAMPLE_HOURLY_TIMES = [
+  "2026-01-01T00:00:00.000Z",
+  "2026-01-01T01:00:00.000Z",
+  "2026-01-01T02:00:00.000Z",
+];
+
+function expectedHourly(temperatures: number[]) {
+  return temperatures.map((temperatureCelsius, index) => ({
+    time: SAMPLE_HOURLY_TIMES[index],
+    temperatureCelsius,
+  }));
 }
 
-function mockWeatherSuccess(shortwaveRadiation: number[] = [120, 340, 560]) {
-  return http.get(OPEN_METEO_URL, () =>
-    HttpResponse.json({ hourly: { shortwave_radiation: shortwaveRadiation } }),
+// Fournisseurs par défaut (cf. .env.example) : BAN pour le géocodage, Open-Meteo pour la météo.
+function mockGeocodingSuccess(lat = 44.13, lon = 4.08) {
+  return http.get(BAN_URL, () =>
+    HttpResponse.json({ features: [{ geometry: { coordinates: [lon, lat] } }] }),
   );
+}
+
+function mockWeatherSuccess(temperatures: number[] = [12.4, 13.1, 15.6]) {
+  return http.get(OPEN_METEO_URL, () =>
+    HttpResponse.json({
+      hourly: {
+        time: SAMPLE_HOURLY_TIMES.slice(0, temperatures.length),
+        temperature_2m: temperatures,
+      },
+    }),
+  );
+}
+
+// `process.env.X = undefined` coercerait en la chaîne "undefined" (Node stocke
+// uniquement des strings dans process.env) — il faut explicitement supprimer
+// la clé pour restaurer un état "non défini".
+function restoreEnvVar(key: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[key];
+  } else {
+    process.env[key] = value;
+  }
 }
 
 const server = setupServer(mockGeocodingSuccess(), mockWeatherSuccess());
@@ -29,8 +64,8 @@ afterAll(() => server.close());
 describe("GET /forecast", () => {
   it("renvoie 200 avec le schéma attendu pour une adresse valide", async () => {
     const address = "Alès";
-    const shortwaveRadiation = [100, 200, 300];
-    server.use(mockGeocodingSuccess(44.13, 4.08), mockWeatherSuccess(shortwaveRadiation));
+    const temperatures = [10.5, 20.1, 30.9];
+    server.use(mockGeocodingSuccess(44.13, 4.08), mockWeatherSuccess(temperatures));
     const app = createApp();
 
     const response = await request(app).get("/forecast").query({ address });
@@ -40,7 +75,7 @@ describe("GET /forecast", () => {
       address,
       latitude: 44.13,
       longitude: 4.08,
-      hourly: { shortwave_radiation: shortwaveRadiation },
+      hourly: expectedHourly(temperatures),
     });
   });
 
@@ -66,7 +101,7 @@ describe("GET /forecast", () => {
   });
 
   it("get_adresseIntrouvableRenvoie404", async () => {
-    server.use(http.get(NOMINATIM_URL, () => HttpResponse.json([])));
+    server.use(http.get(BAN_URL, () => HttpResponse.json({ features: [] })));
     const app = createApp();
 
     const response = await request(app)
@@ -78,14 +113,14 @@ describe("GET /forecast", () => {
   });
 
   it("get_geocodageEnPanneRenvoie502SansDetailTechnique", async () => {
-    server.use(http.get(NOMINATIM_URL, () => new HttpResponse(null, { status: 500 })));
+    server.use(http.get(BAN_URL, () => new HttpResponse(null, { status: 500 })));
     const app = createApp();
 
     const response = await request(app).get("/forecast").query({ address: faker.location.city() });
 
     expect(response.status).toBe(502);
     expect(response.body.type).toBe("https://api.tp-meteo.local/errors/upstream-service-error");
-    expect(response.body.detail).not.toMatch(/nominatim|http|500|stack/i);
+    expect(response.body.detail).not.toMatch(/api-adresse|http|500|stack/i);
   });
 
   it("get_meteoEnPanneRenvoie502SansDetailTechnique", async () => {
@@ -115,7 +150,47 @@ describe("GET /forecast", () => {
       expect(response.status).toBe(429);
       expect(response.body.type).toBe("https://api.tp-meteo.local/errors/rate-limit-exceeded");
     } finally {
-      process.env.RATE_LIMIT_MAX = originalMax;
+      restoreEnvVar("RATE_LIMIT_MAX", originalMax);
+    }
+  });
+
+  it("get_fournisseursAlternatifsConfiguresParEnvRenvoient200SansChangementDeCode", async () => {
+    // Démontre le "coût du changement" du TP2 : permuter de fournisseur ne
+    // demande qu'une variable d'environnement, aucune modification de code.
+    const originalGeocodingProvider = process.env.GEOCODING_PROVIDER;
+    const originalWeatherProvider = process.env.WEATHER_PROVIDER;
+    process.env.GEOCODING_PROVIDER = "nominatim";
+    process.env.WEATHER_PROVIDER = "met-norway";
+    try {
+      const address = "Alès";
+      const temperatures = [5.5, 6.6, 7.7];
+      server.use(
+        http.get(NOMINATIM_URL, () => HttpResponse.json([{ lat: "44.13", lon: "4.08" }])),
+        http.get(MET_NORWAY_URL, () =>
+          HttpResponse.json({
+            properties: {
+              timeseries: temperatures.map((air_temperature, index) => ({
+                time: SAMPLE_HOURLY_TIMES[index],
+                data: { instant: { details: { air_temperature } } },
+              })),
+            },
+          }),
+        ),
+      );
+      const app = createApp();
+
+      const response = await request(app).get("/forecast").query({ address });
+
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({
+        address,
+        latitude: 44.13,
+        longitude: 4.08,
+        hourly: expectedHourly(temperatures),
+      });
+    } finally {
+      restoreEnvVar("GEOCODING_PROVIDER", originalGeocodingProvider);
+      restoreEnvVar("WEATHER_PROVIDER", originalWeatherProvider);
     }
   });
 });

@@ -1,7 +1,12 @@
 import { container as rootContainer } from "tsyringe";
 import { GetForecastByAddress } from "../application/GetForecastByAddress";
+import { BanGeocodingAdapter } from "../infrastructure/outbound/BanGeocodingAdapter";
 import { CachedGeocodingAdapter } from "../infrastructure/outbound/CachedGeocodingAdapter";
+import { DemoGeocodingAdapter } from "../infrastructure/outbound/DemoGeocodingAdapter";
+import { DemoWeatherAdapter } from "../infrastructure/outbound/DemoWeatherAdapter";
 import { CircuitBreakerHttpClient } from "../infrastructure/outbound/http/CircuitBreakerHttpClient";
+import { MetNorwayWeatherAdapter } from "../infrastructure/outbound/MetNorwayWeatherAdapter";
+import { NominatimGeocodingAdapter } from "../infrastructure/outbound/NominatimGeocodingAdapter";
 import { OpenMeteoWeatherAdapter } from "../infrastructure/outbound/OpenMeteoWeatherAdapter";
 import type { Logger } from "../logger";
 import type { Env } from "./env";
@@ -14,6 +19,8 @@ const CIRCUIT_BREAKER_RESET_TIMEOUT_MS = 30_000;
 
 export interface Container {
   getForecastByAddress: GetForecastByAddress;
+  /** Mode démo (TP3) : mêmes ports, adaptateurs sans I/O — cf. docs/TP_3.md. */
+  getDemoForecastByAddress: GetForecastByAddress;
 }
 
 /**
@@ -32,7 +39,9 @@ export function buildContainer(env: Env, logger: Logger): Container {
 
   container.registerInstance(TOKENS.Logger, logger);
   container.registerInstance(TOKENS.NominatimBaseUrl, env.NOMINATIM_BASE_URL);
+  container.registerInstance(TOKENS.BanBaseUrl, env.BAN_BASE_URL);
   container.registerInstance(TOKENS.OpenMeteoBaseUrl, env.OPEN_METEO_BASE_URL);
+  container.registerInstance(TOKENS.MetNorwayBaseUrl, env.MET_NORWAY_BASE_URL);
   container.registerInstance(TOKENS.FetchHttpClientOptions, { timeoutMs: env.HTTP_TIMEOUT_MS });
   container.registerInstance(TOKENS.RetryOptions, {
     maxAttempts: RETRY_MAX_ATTEMPTS,
@@ -46,15 +55,38 @@ export function buildContainer(env: Env, logger: Logger): Container {
     ttlMs: env.GEOCODING_CACHE_TTL_MS,
   });
 
-  // Singleton scopé à ce container : NominatimGeocodingAdapter et
-  // OpenMeteoWeatherAdapter doivent partager la même chaîne retry + circuit
-  // breaker, comme dans le câblage manuel d'origine (cf. §3.6, §3.7).
+  // Singleton scopé à ce container : les deux adaptateurs sortants (quel que
+  // soit le fournisseur choisi ci-dessous) partagent la même chaîne retry +
+  // circuit breaker, comme dans le câblage manuel d'origine (cf. §3.6, §3.7).
   container.registerSingleton(CircuitBreakerHttpClient);
 
+  // Choix du fournisseur sans recompilation (TP2) : seule cette liaison
+  // change selon la configuration, le reste du graphe (cache, résilience,
+  // domaine, application) est identique quel que soit le fournisseur.
+  if (env.GEOCODING_PROVIDER === "ban") {
+    container.register(TOKENS.RawGeocodingPort, { useClass: BanGeocodingAdapter });
+  } else {
+    container.register(TOKENS.RawGeocodingPort, { useClass: NominatimGeocodingAdapter });
+  }
   container.register(TOKENS.GeocodingPort, { useClass: CachedGeocodingAdapter });
-  container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+
+  if (env.WEATHER_PROVIDER === "met-norway") {
+    container.register(TOKENS.WeatherPort, { useClass: MetNorwayWeatherAdapter });
+  } else {
+    container.register(TOKENS.WeatherPort, { useClass: OpenMeteoWeatherAdapter });
+  }
 
   const getForecastByAddress = container.resolve(GetForecastByAddress);
 
-  return { getForecastByAddress };
+  // Mode démo (TP3) — Strategy explicitement illustrée par le cours
+  // (SUPPORT_J2.md, Partie 6) : container enfant du précédent, qui hérite de
+  // tout (Logger, etc.) sauf des deux liaisons ci-dessous, redirigées vers
+  // des adaptateurs sans I/O. Construit une fois au démarrage comme le reste
+  // du graphe (§3.6) : aucun coût ni résolution DI supplémentaire par requête.
+  const demoContainer = container.createChildContainer();
+  demoContainer.register(TOKENS.GeocodingPort, { useClass: DemoGeocodingAdapter });
+  demoContainer.register(TOKENS.WeatherPort, { useClass: DemoWeatherAdapter });
+  const getDemoForecastByAddress = demoContainer.resolve(GetForecastByAddress);
+
+  return { getForecastByAddress, getDemoForecastByAddress };
 }

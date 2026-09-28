@@ -34,7 +34,12 @@ export function createApp(): Express {
     res.status(200).json({ status: "ok" });
   });
 
-  app.use(createForecastRouter(container.getForecastByAddress));
+  app.use(
+    createForecastRouter({
+      real: container.getForecastByAddress,
+      demo: container.getDemoForecastByAddress,
+    }),
+  );
 
   app.use((req, res) => {
     res.status(404).json({
