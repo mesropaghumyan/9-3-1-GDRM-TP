@@ -1,0 +1,14 @@
+{
+  "$comment": "Liste blanche SPDX unique du projet (TP4). Toute modification doit être justifiée par une fiche de décision dans docs/tp4/RAPPORT_TP4.md.",
+  "allowedLicenses": [
+    "MIT",
+    "ISC",
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "BlueOak-1.0.0",
+    "CC-BY-4.0",
+    "CC0-1.0"
+  ]
+}
