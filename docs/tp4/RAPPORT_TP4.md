@@ -296,7 +296,30 @@ exit=0
 
 ### 6.2 En CI
 
-<!-- CI-PROOF -->
+Vérification sur une PR dédiée, [#3](https://github.com/mesropaghumyan/9-3-1-GDRM-TP/pull/3) (branche `test/tp4-gpl-canary`, fermée sans fusion) :
+
+| Étape | Commit    | Run CI                                                        | `quality` | `licenses` | `audit` | `docker` | Résultat |
+| ----- | --------- | ------------------------------------------------------------- | :-------: | :--------: | :-----: | :------: | :------: |
+| Ajout de `@wordpress/is-shallow-equal` (GPL) | `ede32e1` | [36422949879](https://github.com/mesropaghumyan/9-3-1-GDRM-TP/actions/runs/36422949879) | ✅ | ❌ | ✅ | ✅ | **Build en échec** |
+| Retrait du package                            | `b1bbe3f` | [36423095189](https://github.com/mesropaghumyan/9-3-1-GDRM-TP/actions/runs/36423095189) | ✅ | ✅ | ✅ | ✅ | **Build vert**     |
+
+Extrait du log du job `licenses` en échec :
+
+```text
+##[error]@wordpress/is-shallow-equal@5.56.0 est sous "GPL-2.0-or-later" (licence hors liste blanche)
+1 violation(s) de la politique de licences sur 532 packages :
+  - @wordpress/is-shallow-equal@5.56.0 : "GPL-2.0-or-later" (licence hors liste blanche) -> position dans l'arbre : npm explain @wordpress/is-shallow-equal
+Décision attendue : réécrire, substituer, isoler ou négocier (cf. docs/tp4/RAPPORT_TP4.md).
+##[error]Process completed with exit code 1.
+```
+
+L'erreur remonte aussi sous forme d'annotation « Licence refusée » sur la PR. Seul le job `licenses` échoue,
+les autres restent verts : la barrière est bien le mécanisme qui bloque. Comme les 4 jobs sont des
+status checks requis sur `master`, la PR ne peut pas être fusionnée.
+
+> 532 packages sur le runner Linux contre 531 sur macOS : les dépendances optionnelles propres à la
+> plateforme diffèrent (binaires natifs). C'est pour cette raison que le scan de référence est celui
+> de la CI.
 
 ## 7. Limites et risques résiduels
 
